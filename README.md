@@ -1,1 +1,2 @@
 # AgenticCyberSense
+AgenticCyberSense is a project aimed at exploring the intersection of agency and cybersecurity. This repository contains resources, code, and documentation to support the development and understanding of secure systems with a focus on user empowerment and proactive defense mechanisms.
