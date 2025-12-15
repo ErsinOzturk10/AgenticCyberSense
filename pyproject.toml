@@ -16,6 +16,14 @@ dependencies = [
     "watchdog>=6.0.0",
 ]
 
+[dependency-groups]
+dev = [
+  "ruff>=0.9",
+  "mypy>=1.10",
+  "pytest>=8.0",
+  "pre-commit>=3.7",
+]
+
 [build-system]
 requires = ["uv_build>=0.7.3"]
 build-backend = "uv_build"
