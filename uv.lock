@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 [[package]]
 name = "agenticcybersense"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-mcp-adapters" },
