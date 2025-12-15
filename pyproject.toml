@@ -1,7 +1,7 @@
 [project]
 name = "agenticcybersense"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agentic Cyber Defense"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,3 +15,13 @@ dependencies = [
     "torch>=2.9.1",
     "watchdog>=6.0.0",
 ]
+
+[build-system]
+requires = ["uv_build>=0.7.3"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length=160
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"] 
