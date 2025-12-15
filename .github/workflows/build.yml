@@ -17,7 +17,7 @@ jobs:
                 enable-cache: true
             - name: Run pre-commit
               run: |
-                uv pre-commit run --show-diff-on-failure --color=always --all-files
+                uvx pre-commit run --show-diff-on-failure --color=always --all-files
             - name: Build environment
               run: |
                 uv lock --locked
