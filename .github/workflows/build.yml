@@ -24,4 +24,4 @@ jobs:
                 uv build
                 uv sync --all-groups --all-extras
                 uv run mypy src --strict
-                uv run pytest tests -uv -s
+                uv run pytest -s tests
