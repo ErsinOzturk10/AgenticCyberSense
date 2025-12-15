@@ -1,0 +1,17 @@
+[project]
+name = "agenticcybersense"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.2.0",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-ollama>=1.0.1",
+    "langgraph>=1.0.5",
+    "numpy>=2.3.5",
+    "ollama>=0.6.1",
+    "streamlit>=1.52.1",
+    "torch>=2.9.1",
+    "watchdog>=6.0.0",
+]
