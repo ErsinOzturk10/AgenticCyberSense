@@ -4,6 +4,11 @@ def main():
     def dummy_function():
         print("This is a dummy function.")
 
+    dummy_function()
+
+    print("Goodbye from agenticcybersense!")
+    # test comment,
+
     def dummy_function_with_params(param1, param2):
         return f"Received parameters: {param1} and {param2}"
 
