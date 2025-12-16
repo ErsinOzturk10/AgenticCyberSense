@@ -4,7 +4,6 @@ def main():
     def dummy_function():
         print("This is a dummy function.")
 
-
     dummy_function()
 
     print("Goodbye from agenticcybersense!")
