@@ -8,6 +8,7 @@ llm = ChatOllama(model="gpt-oss:latest", temperature=0)
 
 # ------------------ TOOLS ------------------
 
+
 @tool
 def technical_document_lookup(equipment_name: str):
     """Retrieve technical specifications for an equipment code (EQ#####)."""
@@ -15,6 +16,7 @@ def technical_document_lookup(equipment_name: str):
     if code in {"EQ12345", "EQ67890"}:
         return f"Technical details for {code}: Model X, Power: 999 W, Dimensions: 50x50x50 cm."
     return f"No technical details found for {equipment_name}."
+
 
 @tool
 def equipment_history(equipment_name: str):
@@ -24,6 +26,7 @@ def equipment_history(equipment_name: str):
         return "History for EQ12345: Purchased on 2023-01-15, Last serviced on 2024-06-10."
     return f"No history found for {equipment_name}."
 
+
 @tool
 def email_vendor(text: str):
     """Send an email to the vendor about an equipment code."""
@@ -31,13 +34,11 @@ def email_vendor(text: str):
     code = code_match.group(0) if code_match else None
 
     if code == "EQ12345":
-        return (
-            f"Email sent to vendor regarding {code}.\n"
-            f"Body: Dear Vendor, regarding equipment {code}. Context: {text}"
-        )
+        return f"Email sent to vendor regarding {code}.\nBody: Dear Vendor, regarding equipment {code}. Context: {text}"
     elif code:
         return f"Failed to send email for {code}. Only EQ12345 is enabled."
     return "Failed to send email. No valid equipment code found."
+
 
 tools = [technical_document_lookup, equipment_history, email_vendor]
 
@@ -45,6 +46,7 @@ tools = [technical_document_lookup, equipment_history, email_vendor]
 agent_llm = llm.bind_tools(tools)
 
 # ------------------ AGENT LOOP ------------------
+
 
 def run_agent(user_input: str):
     # Step 1: Ask model
@@ -72,6 +74,7 @@ def run_agent(user_input: str):
 
     # No tool used
     return response.content
+
 
 # ------------------ STREAMLIT UI ------------------
 
