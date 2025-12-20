@@ -54,22 +54,29 @@ def run_agent(user_input: str):
 
     # Step 2: If tool call exists
     if response.tool_calls:
-        call = response.tool_calls[0]
-        name = call["name"]
-        args = call["args"]
+        # Build a mapping from tool name to tool function once
+        tool_map = {t.name: t for t in tools}
 
-        tool_fn = {t.name: t for t in tools}[name]
-        tool_result = tool_fn.run(**args)
+        # Execute all requested tool calls
+        tool_messages = []
+        for call in response.tool_calls:
+            name = call["name"]
+            args = call["args"]
 
-        # Step 3: Send tool result back to model
-        final = llm.invoke(
-            [
-                {"role": "user", "content": user_input},
-                response,
-                {"role": "tool", "content": tool_result, "tool_call_id": call["id"]},
-            ]
-        )
+            tool_fn = tool_map[name]
+            tool_result = tool_fn.run(args)
 
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "content": tool_result,
+                    "tool_call_id": call["id"],
+                }
+            )
+
+        # Step 3: Send all tool results back to model
+        messages = [{"role": "user", "content": user_input}, response] + tool_messages
+        final = llm.invoke(messages)
         return final.content
 
     # No tool used
