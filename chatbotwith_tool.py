@@ -59,7 +59,7 @@ def run_agent(user_input: str):
         args = call["args"]
 
         tool_fn = {t.name: t for t in tools}[name]
-        tool_result = tool_fn.run(args)
+        tool_result = tool_fn.run(**args)
 
         # Step 3: Send tool result back to model
         final = llm.invoke(
