@@ -1,7 +1,10 @@
-import streamlit as st
+"""A Streamlit app demonstrating a LangChain agent using GPT-OSS with tool calling capabilities."""
+
 import re
-from langchain_ollama import ChatOllama
+
+import streamlit as st
 from langchain.tools import tool
+from langchain_ollama import ChatOllama
 
 # ✅ Use ChatOllama (supports tool calling)
 llm = ChatOllama(model="gpt-oss:latest", temperature=0)
@@ -10,7 +13,7 @@ llm = ChatOllama(model="gpt-oss:latest", temperature=0)
 
 
 @tool
-def technical_document_lookup(equipment_name: str):
+def technical_document_lookup(equipment_name: str) -> str:
     """Retrieve technical specifications for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code in {"EQ12345", "EQ67890"}:
@@ -19,7 +22,7 @@ def technical_document_lookup(equipment_name: str):
 
 
 @tool
-def equipment_history(equipment_name: str):
+def equipment_history(equipment_name: str) -> str:
     """Fetch service/purchase history for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code == "EQ12345":
@@ -28,14 +31,14 @@ def equipment_history(equipment_name: str):
 
 
 @tool
-def email_vendor(text: str):
+def email_vendor(text: str) -> str:
     """Send an email to the vendor about an equipment code."""
     code_match = re.search(r"\bEQ\d{5}\b", text.upper())
     code = code_match.group(0) if code_match else None
 
     if code == "EQ12345":
         return f"Email sent to vendor regarding {code}.\nBody: Dear Vendor, regarding equipment {code}. Context: {text}"
-    elif code:
+    if code:
         return f"Failed to send email for {code}. Only EQ12345 is enabled."
     return "Failed to send email. No valid equipment code found."
 
@@ -48,7 +51,16 @@ agent_llm = llm.bind_tools(tools)
 # ------------------ AGENT LOOP ------------------
 
 
-def run_agent(user_input: str):
+def run_agent(user_input: str) -> str:
+    """Run the agent with the given user input, handling tool calls if necessary.
+
+    Args:
+        user_input (str): The user's input query.
+
+    Returns:
+        str: The final response from the agent.
+
+    """
     # Step 1: Ask model
     response = agent_llm.invoke(user_input)
 
@@ -71,11 +83,11 @@ def run_agent(user_input: str):
                     "role": "tool",
                     "content": tool_result,
                     "tool_call_id": call["id"],
-                }
+                },
             )
 
         # Step 3: Send all tool results back to model
-        messages = [{"role": "user", "content": user_input}, response] + tool_messages
+        messages = [{"role": "user", "content": user_input}, response, *tool_messages]
         final = llm.invoke(messages)
         return final.content
 
