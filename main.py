@@ -28,6 +28,7 @@ def main() -> None:
 
     result = dummy_function_with_params("value1", "value2")
     print(result)  # noqa: T201
+    print()  # noqa: T201
 
 
 if __name__ == "__main__":
