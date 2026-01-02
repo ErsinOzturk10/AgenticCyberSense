@@ -1,5 +1,5 @@
 """This is a test file for Mehmet."""
 
 
-def dummy_function() -> None:
+def mehmet_s_function() -> None:
     """Do nothing."""
