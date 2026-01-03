@@ -1,4 +1,3 @@
-# tguneyt test file
 """This is a dummy test file for the tguney module in the agenticcybers"""
 
 
@@ -8,9 +7,5 @@ def hello() -> None:
 
 
 hello()
-
-
 print("This is the end of the tguney test file.")
-
-# End of file
 """end of tguney test file"""
