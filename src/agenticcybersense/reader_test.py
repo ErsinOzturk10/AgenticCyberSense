@@ -1,5 +1,6 @@
+"""Module docstring: This module contains a dummy function for demonstration purposes."""
+
+
 def dummy_function() -> str:
-    # """This is a dummy function."""
-    # """pip install uv"""
-    # """.\.venv\Scripts\Activate"""
+    """Return a greeting message."""
     return "Hello, World!"
