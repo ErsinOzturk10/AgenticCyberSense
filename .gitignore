@@ -9,3 +9,9 @@ wheels/
 # Virtual environments
 .venv
 venv
+
+# Dot
+.env
+
+#debug
+.vscode
