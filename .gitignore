@@ -9,3 +9,9 @@ wheels/
 # Virtual environments
 .venv
 venv
+
+
+logs/
+chroma_db_minilm384/
+data/
+*.log
