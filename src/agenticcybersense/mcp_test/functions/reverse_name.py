@@ -1,4 +1,7 @@
+"""Module for name reversal tool."""
+
+
 def reverse_name(name: str) -> str:
-    """Return reversed string give as a name."""
+    """Reverse a string."""
     reversed_name = name[::-1]
     return reversed_name

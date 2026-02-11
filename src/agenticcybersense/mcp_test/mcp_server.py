@@ -1,9 +1,10 @@
 """MCP server for AgenticCyberSense tools."""
 
+from mcp.server.fastmcp import FastMCP
+
 from agenticcybersense.mcp_test.functions import age as age_module
 from agenticcybersense.mcp_test.functions import lastname_retrieval as lastname_module
 from agenticcybersense.mcp_test.functions import reverse_name as reverse_name_module
-from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("dummy-mcp-server")
 

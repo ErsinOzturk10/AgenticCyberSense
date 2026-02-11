@@ -1,3 +1,6 @@
+"""Module for lastname retrieval tool."""
+
+
 def lastname(lastname: str) -> str:
-    """Return lastname tool."""
+    """Return the last name."""
     return lastname

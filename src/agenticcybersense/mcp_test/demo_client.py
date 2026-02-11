@@ -20,7 +20,7 @@ async def run_agent() -> None:
         },
     }
 
-    client = MultiServerMCPClient(server_config) # type: ignore[arg-type]
+    client = MultiServerMCPClient(server_config)  # type: ignore[arg-type]
 
     try:
         # 1. Fetch tool definitions
@@ -43,9 +43,9 @@ async def run_agent() -> None:
         )
 
         agent = create_react_agent(
-            llm, 
-            tools, 
-            prompt=system_prompt
+            llm,
+            tools,
+            prompt=system_prompt,
         )
 
         print("\n" + "=" * 45)

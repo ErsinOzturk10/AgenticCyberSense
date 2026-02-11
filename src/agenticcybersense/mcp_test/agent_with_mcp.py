@@ -1,12 +1,15 @@
 """An example of an LLM agent using MCP to access tools via a local MCP server."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
+
+logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
@@ -37,7 +40,7 @@ async def main() -> None:
     resp = await agent.ainvoke(
         {"messages": [{"role": "user", "content": message_llm}]},
     )
-    print(resp["messages"][-1].content)  # noqa: T201
+    logger.info(f"Agent: {resp['messages'][-1].content}")
 
 
 if __name__ == "__main__":
