@@ -29,7 +29,7 @@ Rules:
 5. If rag_search returns insufficient context, say so.
 6. Do NOT hallucinate.
 7. When using rag_search, cite the source.
-8. If the user mentions an EQ##### code and asks about geçmiş/servis/bakım/satın alma, you MUST call equipment_history.
+8. If the user mentions an EQ##### code and asks about geçmiş/servis/bakim/satin alma, you MUST call equipment_history.
 9. If the user asks about teknik/özellik/specs, you MUST call technical_document_lookup.
 10. The user is asking about equipment, NOT a person. Do not refuse as personal information.
 11. Tool args must be a plain JSON object (e.g., {"equipment_name": "EQ12345"}), not a schema.
@@ -70,7 +70,6 @@ def rag_search(query: str) -> str:
 
 @tool
 def technical_document_lookup(equipment_name: str) -> str:
-    # """Retrieve technical specifications for an equipment code (EQ#####)."""
     """Retrieve technical specifications (teknik özellikler, specs) for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code in {"EQ12345", "EQ67890"}:
@@ -80,8 +79,7 @@ def technical_document_lookup(equipment_name: str) -> str:
 
 @tool
 def equipment_history(equipment_name: str) -> str:
-    # """Fetch service/purchase history for an equipment code (EQ#####)."""
-    """Fetch service/purchase history (geçmiş, servis, bakım, satın alma) for an equipment code (EQ#####)."""
+    """Fetch service/purchase history (gecmis, servis, bakim, satin alma) for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code == "EQ12345":
         return "History for EQ12345: Purchased on 2023-01-15, Last serviced on 2024-06-10."
@@ -112,9 +110,8 @@ tools = [
 # ================== AGENT (LLM + TOOLS) ==================
 
 agent_llm = ChatOllama(
-    # model="qwen2.5:7b",
     model="llama3.2:3b",
-    base_url="http://127.0.0.1:11434",  # Ollama'nın Docker'da çalıştığı URL ve port
+    base_url="http://127.0.0.1:11434",  # Ollama runs in Docker.
     temperature=0,
     system=SYSTEM_PROMPT,
     verbose=True,
@@ -122,7 +119,7 @@ agent_llm = ChatOllama(
 
 
 # ================== HELPER FUNCTION ==================
-def _normalize_tool_args(raw_args):
+def _normalize_tool_args(raw_args: object) -> dict:
     """Fix common malformed tool-call args produced by small models."""
     if raw_args is None:
         return {}
@@ -131,7 +128,7 @@ def _normalize_tool_args(raw_args):
     if isinstance(raw_args, str):
         try:
             raw_args = json.loads(raw_args)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             return {}
 
     if not isinstance(raw_args, dict):
@@ -155,16 +152,12 @@ def _normalize_tool_args(raw_args):
 
 
 def run_agent(user_input: str) -> str:
-    """Runs the agent. If a tool is called, executes the tool and
-    feeds the result back to the agent.
-    """
+    """Run the agent."""
     response = agent_llm.invoke(user_input)
-    st.write("response", response)
 
     # -------- TOOL CALL HANDLING --------
     if response.tool_calls:
         tool_map = {t.name: t for t in tools}
-        st.write("tool map: ", tool_map)
         tool_messages = []
 
         for call in response.tool_calls:
@@ -172,23 +165,20 @@ def run_agent(user_input: str) -> str:
             args = call["args"]
 
             # 🔍 TOOL LOGGING (UI)
-            st.write(f"🛠️ Tool çağrıldı: `{name}`")
-            st.write(f"Tool cagrildi args: `{args}`")
+            st.write(f"🛠️ Tool called: `{name}`")
             st.json(args)
 
             tool_fn = tool_map[name]
-            st.write("tool_fn:", tool_fn)
-            # tool_result = tool_fn.run(args)
             fixed_args = _normalize_tool_args(args)
             st.write("✅ Normalize args:")
             st.json(fixed_args)
 
             try:
-                tool_result = tool_fn.invoke(fixed_args)  # invoke daha modern/sağlam
-            except Exception as e:
+                tool_result = tool_fn.invoke(fixed_args)  # invoke is more modern/robust
+            except RuntimeError as e:
                 tool_result = f"Tool execution error ({name}): {e}"
 
-            st.write("📤 Tool sonucu:")
+            st.write("📤 Tool result:")
             st.write(tool_result)
 
             tool_messages.append(
@@ -215,9 +205,8 @@ def run_agent(user_input: str) -> str:
 # ================== STREAMLIT UI ==================
 
 
-# initialize_rag()
 @st.cache_resource(show_spinner="📚 PDF'ler indexleniyor (ilk sefer biraz sürebilir)...")
-def _init_rag():
+def _init_rag() -> None:
     return initialize_rag(rebuild=False)
 
 
@@ -231,5 +220,5 @@ user_input = st.text_input("Sorunu yaz:")
 
 if user_input:
     answer = run_agent(user_input)
-    st.markdown("### 🤖 Cevap")
+    st.markdown("### 🤖 Answer")
     st.write(answer)"""

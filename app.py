@@ -1,3 +1,5 @@
+"""Streamlit app for RAG POC (PDF → Chroma → Retrieval → Ollama LLM)."""
+
 import json
 import time
 from datetime import UTC, datetime
@@ -15,14 +17,15 @@ LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "rag_runs.jsonl"
 
 
-def log_run(payload: dict):
+def log_run(payload: dict) -> None:
+    """Log the given payload dictionary to a log file, appending a UTC timestamp."""
     payload["ts_utc"] = datetime.now(UTC).isoformat()
     with LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 @st.cache_resource(show_spinner=True)
-def _init_once():
+def _init_once() -> dict:
     return _init_rag()
 
 
@@ -34,7 +37,13 @@ if st.sidebar.button("🔄 Sync / Reingest PDFs", use_container_width=True):
         status = _init_once()
     if status:
         st.sidebar.success(
-            f"Sync done. mode={status.get('mode')} | added={status.get('added_pdfs')} | updated={status.get('updated_pdfs')} | skipped={status.get('skipped_pdfs')} | chunks_added={status.get('chunks_added')}",
+            (
+                f"Sync done. mode={status.get('mode')} | "
+                f"added={status.get('added_pdfs')} | "
+                f"updated={status.get('updated_pdfs')} | "
+                f"skipped={status.get('skipped_pdfs')} | "
+                f"chunks_added={status.get('chunks_added')}"
+            ),
         )
     else:
         st.sidebar.warning("No PDFs found or DB path incorrect.")
@@ -51,11 +60,20 @@ try:
     status0 = _init_once()
     if status0:
         st.success(
-            f"RAG initialized. mode={status0.get('mode')} | added={status0.get('added_pdfs')} | updated={status0.get('updated_pdfs')} | skipped={status0.get('skipped_pdfs')} | chunks_added={status0.get('chunks_added')}",
+            (
+                f"RAG initialized. mode={status0.get('mode')} | "
+                f"added={status0.get('added_pdfs')} | "
+                f"updated={status0.get('updated_pdfs')} | "
+                f"skipped={status0.get('skipped_pdfs')} | "
+                f"chunks_added={status0.get('chunks_added')}"
+            ),
         )
     else:
         st.warning("RAG init returned None. Check ./data for PDFs.")
-except Exception as e:
+except RuntimeError as e:
+    st.error(f"RAG init failed: {e}")
+    st.stop()
+except OSError as e:
     st.error(f"RAG init failed: {e}")
     st.stop()
 
