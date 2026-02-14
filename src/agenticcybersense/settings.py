@@ -32,6 +32,13 @@ class Settings:
     # MCP Settings
     mcp_server_host: str = field(default_factory=lambda: os.getenv("MCP_SERVER_HOST", "localhost"))
     mcp_server_port: int = field(default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8765")))
+    # Target URL for MCP clients / SSE endpoints
+    mcp_target_url: str = field(
+        default_factory=lambda: os.getenv(
+            "MCP_TARGET_URL",
+            "http://127.0.0.1:8000/mcp/sse",
+        ),
+    )
 
     # API Server Settings
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))  # noqa: S104
