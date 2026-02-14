@@ -2,5 +2,5 @@
 
 
 def reverse_name(name: str) -> str:
-    """Reverse a string.""" 
+    """Reverse a string."""
     return name[::-1]
