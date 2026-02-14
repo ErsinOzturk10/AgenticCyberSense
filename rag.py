@@ -1,41 +1,30 @@
-# rag.py
-
-"""
-RAG utilities: build/load a persistent Chroma vector store from PDFs in /data
-and run similarity search with source citations.
-
-- PDFs: ./data/*.pdf
-- Vector DB: ./chroma_db_minilm384 (persisted locally, gitignored)
-"""
-
+```python
 from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import logging
+import shutil
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data"
-
-# Versioned DB dir to avoid embedding-dimension mismatches
 DB_PATH = BASE_DIR / "chroma_db_minilm384"
-
-# Track what we've ingested so we can do incremental updates safely
 MANIFEST_PATH = DB_PATH / "ingested_manifest.json"
 
-_vectordb: Optional[Chroma] = None
+_vectordb: Chroma | None = None
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -53,14 +42,18 @@ def _load_manifest() -> dict:
     if MANIFEST_PATH.exists():
         try:
             return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Manifest read/parse failed, resetting: %s", e)
             return {"files": {}}
     return {"files": {}}
 
 
 def _save_manifest(manifest: dict) -> None:
     DB_PATH.mkdir(parents=True, exist_ok=True)
-    MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _list_pdfs() -> list[Path]:
@@ -69,7 +62,7 @@ def _list_pdfs() -> list[Path]:
     return sorted([p for p in DATA_PATH.glob("*.pdf") if p.is_file()])
 
 
-def _build_embeddings():
+def _build_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 
@@ -79,21 +72,26 @@ def _split_docs(documents):
 
 
 def _make_chunk_ids(file_sha: str, docs) -> list[str]:
-    ids = []
-    for i, d in enumerate(docs):
-        page = d.metadata.get("page", "na")
-        ids.append(f"{file_sha}:{page}:{i}")
-    return ids
+    return [f"{file_sha}:{d.metadata.get('page', 'na')}:{i}" for i, d in enumerate(docs)]
+
+
+def _safe_persist(db: Chroma) -> None:
+    """Persist() varsa çağır; yoksa sessizce geç. Beklenen hataları dar yakala."""
+    persist_fn = getattr(db, "persist", None)
+    if not callable(persist_fn):
+        return
+
+    try:
+        persist_fn()
+    except (OSError, RuntimeError, ValueError) as e:
+        logger.warning("Chroma persist failed: %s", e)
 
 
 def _delete_by_source(vectordb: Chroma, source_path: str) -> None:
-    """
-    Best-effort delete all chunks for a given PDF source.
-    """
     try:
         vectordb._collection.delete(where={"source": source_path})
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError, RuntimeError) as e:
+        logger.warning("Delete by source failed (%s): %s", source_path, e)
 
 
 def _ingest_pdf(vectordb: Chroma, pdf_path: Path, file_sha: str) -> int:
@@ -112,22 +110,6 @@ def _ingest_pdf(vectordb: Chroma, pdf_path: Path, file_sha: str) -> int:
 
 
 def initialize_rag(rebuild: bool = False) -> dict:
-    """
-    Initialize RAG once at application startup.
-
-    Returns a small status dict:
-    {
-      "mode": "rebuild" | "load" | "incremental",
-      "pdf_total": int,
-      "added_pdfs": int,
-      "updated_pdfs": int,
-      "skipped_pdfs": int,
-      "chunks_added": int
-    }
-
-    - If rebuild=True: rebuild DB from all PDFs (fresh).
-    - Else: load DB if exists, then incrementally ingest any new/changed PDFs from ./data.
-    """
     global _vectordb
 
     embeddings = _build_embeddings()
@@ -144,18 +126,12 @@ def initialize_rag(rebuild: bool = False) -> dict:
         "chunks_added": 0,
     }
 
-    # Rebuild means "start clean"
+    # Rebuild DB if requested
     if rebuild and DB_PATH.exists():
-        for p in DB_PATH.glob("*"):
-            try:
-                if p.is_file():
-                    p.unlink()
-                else:
-                    for sub in p.rglob("*"):
-                        if sub.is_file():
-                            sub.unlink()
-            except Exception:
-                pass
+        try:
+            shutil.rmtree(DB_PATH)
+        except OSError as e:
+            logger.warning("Could not remove DB directory %s: %s", DB_PATH, e)
         status["mode"] = "rebuild"
 
     # Load existing DB if present (fast)
@@ -165,41 +141,34 @@ def initialize_rag(rebuild: bool = False) -> dict:
             embedding_function=embeddings,
         )
     else:
-        # Build from all PDFs
-        all_docs = []
-        for pdf in pdfs:
-            loader = PyPDFLoader(str(pdf))
-            all_docs.extend(loader.load())
-
-        docs = _split_docs(all_docs)
-        _vectordb = Chroma.from_documents(
-            documents=docs,
-            embedding=embeddings,
+        # Fresh build from all PDFs (use same ingestion path for consistent metadata)
+        DB_PATH.mkdir(parents=True, exist_ok=True)
+        _vectordb = Chroma(
             persist_directory=str(DB_PATH),
+            embedding_function=embeddings,
         )
-        try:
-            _vectordb.persist()
-        except Exception:
-            pass
 
         manifest = {"files": {}}
         for pdf in pdfs:
-            src = str(pdf.resolve())
             st = pdf.stat()
             file_sha = _sha256_file(pdf)
-            manifest["files"][src] = {
+
+            status["chunks_added"] += _ingest_pdf(_vectordb, pdf, file_sha)
+            manifest["files"][str(pdf.resolve())] = {
                 "sha256": file_sha,
                 "size": st.st_size,
                 "mtime_ns": st.st_mtime_ns,
                 "ingested_at_utc": _utc_now_iso(),
             }
+
+        _safe_persist(_vectordb)
         _save_manifest(manifest)
 
         status["mode"] = "rebuild" if rebuild else "rebuild_initial"
         status["added_pdfs"] = len(pdfs)
         return status
 
-    # Incremental ingestion: add only new/changed PDFs
+    # Incremental ingestion
     status["mode"] = "incremental"
     manifest = _load_manifest()
     manifest.setdefault("files", {})
@@ -208,8 +177,8 @@ def initialize_rag(rebuild: bool = False) -> dict:
         src = str(pdf.resolve())
         st = pdf.stat()
         file_sha = _sha256_file(pdf)
-
         prev = manifest["files"].get(src)
+
         if prev and prev.get("sha256") == file_sha:
             status["skipped_pdfs"] += 1
             continue
@@ -221,7 +190,6 @@ def initialize_rag(rebuild: bool = False) -> dict:
             status["added_pdfs"] += 1
 
         status["chunks_added"] += _ingest_pdf(_vectordb, pdf, file_sha)
-
         manifest["files"][src] = {
             "sha256": file_sha,
             "size": st.st_size,
@@ -229,18 +197,13 @@ def initialize_rag(rebuild: bool = False) -> dict:
             "ingested_at_utc": _utc_now_iso(),
         }
 
-    try:
-        _vectordb.persist()
-    except Exception:
-        pass
-
+    _safe_persist(_vectordb)
     _save_manifest(manifest)
     return status
 
 
 def rag_search(query: str, k: int = 4) -> str:
-    global _vectordb
-
+    """Performs a retrieval-augmented generation (RAG) search using the provided query."""
     if _vectordb is None:
         return "RAG is not initialized. Please initialize the vector store first."
 
@@ -248,13 +211,12 @@ def rag_search(query: str, k: int = 4) -> str:
     if not results:
         return "No relevant information found."
 
-    response_parts = []
+    response_parts: list[str] = []
     for r in results:
         src_path = r.metadata.get("source", "unknown")
         src_name = Path(src_path).name if src_path != "unknown" else "unknown"
         page0 = r.metadata.get("page", None)
         page = (page0 + 1) if isinstance(page0, int) else "N/A"
-
         text = (r.page_content or "").strip()
         response_parts.append(f"**Kaynak:** {src_name} | **Sayfa:** {page}\n\n{text}")
 

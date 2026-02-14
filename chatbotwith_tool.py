@@ -1,18 +1,14 @@
-"""
-A Streamlit app demonstrating a LangChain agent using tool calling + RAG.
-"""
+"""A Streamlit app demonstrating a LangChain agent using tool calling + RAG."""
 
-import os
-import re
 import json
+import re
+
 import streamlit as st
 from langchain.tools import tool
-
 from langchain_ollama import ChatOllama
 
-from rag import rag_search as _rag_search
 from rag import initialize_rag
-
+from rag import rag_search as _rag_search
 
 # ================== SYSTEM PROMPT ==================
 
@@ -37,15 +33,37 @@ Rules:
 9. If the user asks about teknik/özellik/specs, you MUST call technical_document_lookup.
 10. The user is asking about equipment, NOT a person. Do not refuse as personal information.
 11. Tool args must be a plain JSON object (e.g., {"equipment_name": "EQ12345"}), not a schema.
+12. If the question is unrelated to equipment or uploaded documents, NEVER call rag_search.
+13. If the question is about general world knowledge (e.g., weather, geography, politics), answer directly without any tool.
+14. Never call rag_search for unrelated general questions.
 """
 
 
 # ================== TOOLS ==================
 
+
 @tool
 def rag_search(query: str) -> str:
-    """
-    Search relevant information from uploaded PDFs.
+    """Retrieve information ONLY from the uploaded Cyber Threat Intelligence PDFs.
+
+    Use this tool when the user asks about:
+    - Cyber Threat Intelligence (definition, characteristics, benefits)
+    - Adversaries (cybercriminals, hacktivists, espionage actors)
+    - Threat indicators, threat data feeds
+    - Intelligence lifecycle (collection, analysis, dissemination)
+    - Tactical, operational, strategic intelligence usage
+    - Incident response, SOC, SIEM context
+    - Intelligence program implementation
+    - Intelligence partner selection
+    - Risk prioritization, assets, threat actors
+
+    DO NOT use this tool for:
+    - General knowledge questions (e.g., weather, geography, politics)
+    - Real-time information
+    - Topics unrelated to cybersecurity or cyber threat intelligence
+
+    If relevant information is not found in the PDFs, return:
+    "Insufficient information in the provided documents."
     """
     return _rag_search(query)
 
@@ -56,10 +74,7 @@ def technical_document_lookup(equipment_name: str) -> str:
     """Retrieve technical specifications (teknik özellikler, specs) for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code in {"EQ12345", "EQ67890"}:
-        return (
-            f"Technical details for {code}: "
-            "Model X, Power: 999 W, Dimensions: 50x50x50 cm."
-        )
+        return f"Technical details for {code}: Model X, Power: 999 W, Dimensions: 50x50x50 cm."
     return f"No technical details found for {equipment_name}."
 
 
@@ -69,10 +84,7 @@ def equipment_history(equipment_name: str) -> str:
     """Fetch service/purchase history (geçmiş, servis, bakım, satın alma) for an equipment code (EQ#####)."""
     code = equipment_name.strip().upper()
     if code == "EQ12345":
-        return (
-            "History for EQ12345: Purchased on 2023-01-15, "
-            "Last serviced on 2024-06-10."
-        )
+        return "History for EQ12345: Purchased on 2023-01-15, Last serviced on 2024-06-10."
     return f"No history found for {equipment_name}."
 
 
@@ -83,10 +95,7 @@ def email_vendor(text: str) -> str:
     code = code_match.group(0) if code_match else None
 
     if code == "EQ12345":
-        return (
-            f"Email sent to vendor regarding {code}.\n"
-            f"Body: Dear Vendor, regarding equipment {code}. Context: {text}"
-        )
+        return f"Email sent to vendor regarding {code}.\nBody: Dear Vendor, regarding equipment {code}. Context: {text}"
     if code:
         return f"Failed to send email for {code}. Only EQ12345 is enabled."
     return "Failed to send email. No valid equipment code found."
@@ -104,12 +113,13 @@ tools = [
 
 agent_llm = ChatOllama(
     # model="qwen2.5:7b",
-    model="llama3.2:1b",
-    base_url="http://127.0.0.1:11434", # Ollama'nın Docker'da çalıştığı URL ve port
+    model="llama3.2:3b",
+    base_url="http://127.0.0.1:11434",  # Ollama'nın Docker'da çalıştığı URL ve port
     temperature=0,
     system=SYSTEM_PROMPT,
-    verbose=True
+    verbose=True,
 ).bind_tools(tools)
+
 
 # ================== HELPER FUNCTION ==================
 def _normalize_tool_args(raw_args):
@@ -143,17 +153,18 @@ def _normalize_tool_args(raw_args):
 
 # ================== AGENT LOOP ==================
 
+
 def run_agent(user_input: str) -> str:
-    """
-    Runs the agent. If a tool is called, executes the tool and
+    """Runs the agent. If a tool is called, executes the tool and
     feeds the result back to the agent.
     """
-
     response = agent_llm.invoke(user_input)
+    st.write("response", response)
 
     # -------- TOOL CALL HANDLING --------
     if response.tool_calls:
         tool_map = {t.name: t for t in tools}
+        st.write("tool map: ", tool_map)
         tool_messages = []
 
         for call in response.tool_calls:
@@ -162,12 +173,13 @@ def run_agent(user_input: str) -> str:
 
             # 🔍 TOOL LOGGING (UI)
             st.write(f"🛠️ Tool çağrıldı: `{name}`")
+            st.write(f"Tool cagrildi args: `{args}`")
             st.json(args)
 
             tool_fn = tool_map[name]
+            st.write("tool_fn:", tool_fn)
             # tool_result = tool_fn.run(args)
             fixed_args = _normalize_tool_args(args)
-
             st.write("✅ Normalize args:")
             st.json(fixed_args)
 
@@ -184,7 +196,7 @@ def run_agent(user_input: str) -> str:
                     "role": "tool",
                     "content": tool_result,
                     "tool_call_id": call["id"],
-                }
+                },
             )
 
         messages = [
@@ -202,15 +214,17 @@ def run_agent(user_input: str) -> str:
 
 # ================== STREAMLIT UI ==================
 
+
 # initialize_rag()
 @st.cache_resource(show_spinner="📚 PDF'ler indexleniyor (ilk sefer biraz sürebilir)...")
 def _init_rag():
-    initialize_rag()
+    return initialize_rag(rebuild=False)
+
 
 _init_rag()
 
 
-
+"""
 st.title("Agentic RAG Chatbot")
 
 user_input = st.text_input("Sorunu yaz:")
@@ -218,4 +232,4 @@ user_input = st.text_input("Sorunu yaz:")
 if user_input:
     answer = run_agent(user_input)
     st.markdown("### 🤖 Cevap")
-    st.write(answer)
+    st.write(answer)"""
