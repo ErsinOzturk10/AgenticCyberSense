@@ -30,10 +30,11 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data"
 DB_PATH = BASE_DIR / "chroma_db_minilm384"
 MANIFEST_PATH = DB_PATH / "ingested_manifest.json"
+HASH_READ_CHUNK_SIZE: Final[int] = 1024 * 1024
 
 EMBEDDING_MODEL: Final[str] = "sentence-transformers/all-MiniLM-L6-v2"
-CHUNK_SIZE: Final[int] = 800
-CHUNK_OVERLAP: Final[int] = 150
+TEXT_CHUNK_SIZE: Final[int] = 800
+TEXT_CHUNK_OVERLAP: Final[int] = 150
 
 _vectordb: Chroma | None = None
 
@@ -42,7 +43,7 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+def _sha256_file(path: Path, chunk_size: int = HASH_READ_CHUNK_SIZE) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
         while True:
@@ -82,7 +83,7 @@ def _build_embeddings() -> HuggingFaceEmbeddings:
  
 
 def _split_docs(documents: list) -> list:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=TEXT_CHUNK_SIZE, chunk_overlap=TEXT_CHUNK_OVERLAP)
     return splitter.split_documents(documents)
 
 
