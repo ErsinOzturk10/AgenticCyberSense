@@ -24,13 +24,16 @@ ERR_NO_PDF: Final[str] = "No PDF documents found in ./data folder."
 ERR_RAG_NOT_INIT: Final[str] = "RAG is not initialized. Please initialize the vector store first."
 ERR_MANIFEST_BAD: Final[str] = "Manifest is unreadable; resetting."
 
-
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "data"
 DB_PATH = BASE_DIR / "chroma_db_minilm384"
 MANIFEST_PATH = DB_PATH / "ingested_manifest.json"
+
+EMBEDDING_MODEL: Final[str] = "sentence-transformers/all-MiniLM-L6-v2"
+CHUNK_SIZE: Final[int] = 800
+CHUNK_OVERLAP: Final[int] = 150
 
 _vectordb: Chroma | None = None
 
@@ -75,11 +78,11 @@ def _list_pdfs() -> list[Path]:
 
 
 def _build_embeddings() -> HuggingFaceEmbeddings:
-    return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+ 
 
 def _split_docs(documents: list) -> list:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=150)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     return splitter.split_documents(documents)
 
 
