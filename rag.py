@@ -80,7 +80,7 @@ def _list_pdfs() -> list[Path]:
 
 def _build_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
- 
+
 
 def _split_docs(documents: list) -> list:
     splitter = RecursiveCharacterTextSplitter(chunk_size=TEXT_CHUNK_SIZE, chunk_overlap=TEXT_CHUNK_OVERLAP)
