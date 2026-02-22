@@ -1,1 +1,1 @@
-"""Generate a response using Retrieval-Augmented Generation (RAG)"""
+"""Generate a response using Retrieval-Augmented Generation (RAG)."""
