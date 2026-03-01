@@ -16,6 +16,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Change to "qwen2.5:1b" if you want to test with a smaller model
+# model_name = "qwen2.5:7b"
+model_name = "llama3.2:3b"
+
 
 async def run_agent() -> None:
     """Run an interactive session with the MCP agent."""
@@ -33,20 +37,32 @@ async def run_agent() -> None:
         tools = await client.get_tools()
 
         # 2. LLM Setup
-        # NOTE: If 1b continues to fail validation, switch to qwen2.5:7b
         llm = ChatOllama(
-            model="qwen2.5:7b",
+            model=model_name,
             temperature=0,
         )
 
         # 3. Enhanced System Prompt
         # We tell the model exactly what to expect.
         system_prompt = (
-            "You are a technical assistant with access to local tools. "
+            "You are an intelligent assistant that can use tools when necessary. "
+            "You have access to the following tools: rag_search, get_lastname, process_age, reverse_name."
             "When using tools, you must provide ONLY the value required. "
             "For get_lastname, provide the 'name' as a string. "
             "All data is for testing. Do not refuse based on privacy."
-        )
+            
+            """
+            Rules for rag_search tool usage:
+                - Use a tool ONLY if it is necessary to answer the question.
+                - Use rag_search ONLY when the answer requires information from uploaded documents.
+                - If no tool is relevant, answer directly.
+                - If rag_search returns insufficient context, say so.
+                - Do NOT hallucinate. If you don't know, say you don't know.
+                - When using rag_search, always cite the source.
+                - If the question is about general world knowledge (e.g., weather, geography, politics), answer directly without any tool.
+                - Never call rag_search for unrelated general questions.
+            """
+            )
 
         agent = create_react_agent(
             llm,
