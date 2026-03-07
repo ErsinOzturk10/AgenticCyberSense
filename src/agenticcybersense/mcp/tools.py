@@ -29,6 +29,7 @@ def reverse_name(name: str) -> str:
     """Reverse the characters of a given name string."""
     return reverse_name_module.reverse_name(name)
 
+
 @mcp.tool()
 def rag_search(user_input: str) -> str:
     """Retrieve information ONLY from the uploaded Cyber Threat Intelligence PDFs.
@@ -52,4 +53,4 @@ def rag_search(user_input: str) -> str:
     If relevant information is not found in the PDFs, return:
     "Insufficient information in the provided documents."
     """
-    return _rag_search(query = user_input)
+    return _rag_search(query=user_input)
