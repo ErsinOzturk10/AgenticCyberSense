@@ -6,7 +6,7 @@ from mcp.server.fastmcp import FastMCP
 from agenticcybersense.mcp.functions import age as age_module
 from agenticcybersense.mcp.functions import lastname_retrieval as lastname_module
 from agenticcybersense.mcp.functions import reverse_name as reverse_name_module
-from agenticcybersense.rag.rag import rag_search
+from agenticcybersense.rag.rag import rag_search as _rag_search
 
 # Initialize FastMCP server
 mcp = FastMCP("dummy-mcp-tools-server")
@@ -30,7 +30,7 @@ def reverse_name(name: str) -> str:
     return reverse_name_module.reverse_name(name)
 
 @mcp.tool()
-def rag_search(query: str) -> str:
+def rag_search(user_input: str) -> str:
     """Retrieve information ONLY from the uploaded Cyber Threat Intelligence PDFs.
 
     Use this tool when the user asks about:
@@ -52,4 +52,4 @@ def rag_search(query: str) -> str:
     If relevant information is not found in the PDFs, return:
     "Insufficient information in the provided documents."
     """
-    return _rag_search(query)
+    return _rag_search(query = user_input)

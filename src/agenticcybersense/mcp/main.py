@@ -7,7 +7,7 @@ import warnings
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
-
+from agenticcybersense.rag.rag import initialize_rag
 from agenticcybersense.settings import settings
 
 # Suppress deprecation warnings
@@ -15,6 +15,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+initialize_rag(rebuild=False)  # Initialize RAG vector store at startup, set rebuild=True to force re-ingestion of PDFs. In production, you might want to set this to False to avoid unnecessary reprocessing on every startup.
 
 # Change to "qwen2.5:1b" if you want to test with a smaller model
 # model_name = "qwen2.5:7b"
@@ -31,10 +33,13 @@ async def run_agent() -> None:
     }
 
     client = MultiServerMCPClient(server_config)  # type: ignore[arg-type]
+    # The client will automatically connect to the server when you call get_tools() for the first time.
 
     try:
         # 1. Fetch tool definitions
         tools = await client.get_tools()
+        logger.info(f"\nTools: {tools}")  # This will show the tool definitions received from the MCP server. The agent will use this information to know how to call the tools when needed.
+        # The tools variable is a dictionary of tool names to their definitions, which the agent will use to know how to call them.
 
         # 2. LLM Setup
         llm = ChatOllama(
@@ -79,6 +84,7 @@ async def run_agent() -> None:
             user_input = input("User: ").strip()
 
             if not user_input:
+                # If the user just presses Enter without typing anything, we can choose to ignore it or prompt them again.
                 continue
             if user_input.lower() in ["exit", "quit"]:
                 break
@@ -89,14 +95,19 @@ async def run_agent() -> None:
                 response = await agent.ainvoke(
                     {"messages": [{"role": "user", "content": user_input}]},
                 )
+                # The response is a dictionary that includes the agent's messages and any tool calls it made. The final response from the agent is typically in the last message.
+                logger.info(f"\nAgent_response_as_a_dict: {response}")  # To see the full response structure
+                logger.info("\n" + "-" * 45)  # noqa: G003
 
                 final_response = response["messages"][-1].content
+                # The agent's final response is what it would say to the user after processing the input and any tool calls. It should reflect the agent's reasoning and the results of any tools it used.
                 logger.info(f"\nAgent: {final_response}")  # noqa: G004
                 logger.info("\n" + "-" * 45)  # noqa: G003
 
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
                 # This catches the Pydantic validation error you saw
-                logger.error("Tip: Small models (1b) may struggle with tool formatting.")  # noqa: TRY400
+                #logger.error("Tip: Small models (1b) may struggle with tool formatting.")  # noqa: TRY400
+                logger.exception(e)
 
     finally:
         logger.info("Shutting down client...")

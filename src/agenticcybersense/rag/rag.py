@@ -20,19 +20,23 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from agenticcybersense.settings import settings
 ERR_NO_PDF: Final[str] = "No PDF documents found in ./data folder."
 ERR_RAG_NOT_INIT: Final[str] = "RAG is not initialized. Please initialize the vector store first."
 ERR_MANIFEST_BAD: Final[str] = "Manifest is unreadable; resetting."
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data"
-DB_PATH = BASE_DIR / "chroma_db_minilm384"
+BASE_DIR = Path(__file__).resolve().parent #/src/agenticcybersense/rag
+DATA_PATH = settings.pdf_docs_dir
+logger.info(f"BASE_DIR: {BASE_DIR}")
+logger.info(f"DATA_PATH: {DATA_PATH}")
+logger.info(f"DATA_PATH exists: {DATA_PATH.exists()}")
+DB_PATH = settings.chroma_persist_dir
 MANIFEST_PATH = DB_PATH / "ingested_manifest.json"
 HASH_READ_CHUNK_SIZE: Final[int] = 1024 * 1024
 
-EMBEDDING_MODEL: Final[str] = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL: Final[str] = settings.embedding_model
 TEXT_CHUNK_SIZE: Final[int] = 800
 TEXT_CHUNK_OVERLAP: Final[int] = 150
 
@@ -72,10 +76,18 @@ def _save_manifest(manifest: dict) -> None:
     )
 
 
-def _list_pdfs() -> list[Path]:
-    if not DATA_PATH.exists():
+def _list_pdfs(datapath= DATA_PATH) -> list[Path]:
+    
+    logger.info(f"Scanning DATA_PATH: {DATA_PATH}")
+    
+    if not datapath.exists():
+        logger.warning("DATA_PATH does not exist: %s", datapath)  
         return []
-    return sorted([p for p in DATA_PATH.glob("*.pdf") if p.is_file()])
+    pdfs = list(datapath.glob("*.pdf"))
+    logger.info("DATA_PATH exists: %s, found %d PDFs", datapath, len(pdfs))
+    pdfs = sorted([p for p in pdfs if p.is_file()])
+    logger.info("After filtering, found %d PDFs: %s", len(pdfs), [p.name for p in pdfs])
+    return pdfs
 
 
 def _build_embeddings() -> HuggingFaceEmbeddings:
@@ -115,24 +127,39 @@ def _delete_by_source(vectordb: Chroma, source_path: str) -> None:
 
 
 def _ingest_pdf(vectordb: Chroma, pdf_path: Path, file_sha: str) -> int:
-    loader = PyPDFLoader(str(pdf_path))
-    documents = loader.load()
-    docs = _split_docs(documents)
 
-    src = str(pdf_path.resolve())
+    logger.info(f"Loading PDF: {pdf_path}")
+
+    try:
+        loader = PyPDFLoader(str(pdf_path))
+        documents = loader.load()
+        logger.info(f"Pages loaded: {len(documents)}")
+    except Exception as e:
+        logger.exception("PDF load failed for %s: %s", pdf_path, e)
+        raise
+    
+    logger.info(f"Pages loaded: {len(documents)}")
+    docs = _split_docs(documents)
+    logger.info(f"Documents split into chunks: {len(docs)}")
+
+
+    src = str(pdf_path.resolve()) # Use absolute path as source for better traceability
     for d in docs:
         d.metadata["source"] = src
         d.metadata["file_sha256"] = file_sha
 
     ids = _make_chunk_ids(file_sha, docs)
     vectordb.add_documents(documents=docs, ids=ids)
+    logger.info(f"Chunks created: {len(docs)}")
     return len(docs)
 
 
 def initialize_rag(*, rebuild: bool = False) -> dict:
     """Initialize the RAG vector store by ingesting PDFs from the data directory."""
+    logger.info("Initializing RAG vector store...")
     embeddings = _build_embeddings()
-    pdfs = _list_pdfs()
+    logger.info("Embedding model loaded: %s", EMBEDDING_MODEL)
+    pdfs = _list_pdfs(DATA_PATH)
     if not pdfs:
         raise RuntimeError(ERR_NO_PDF)
 
@@ -147,6 +174,7 @@ def initialize_rag(*, rebuild: bool = False) -> dict:
 
     # Rebuild DB if requested
     if rebuild and DB_PATH.exists():
+        logger.info("Rebuilding vector store from scratch.")
         try:
             shutil.rmtree(DB_PATH)
         except OSError as e:
@@ -182,6 +210,7 @@ def initialize_rag(*, rebuild: bool = False) -> dict:
                 "mtime_ns": st.st_mtime_ns,
                 "ingested_at_utc": _utc_now_iso(),
             }
+            logger.info("PDF %s processed: %d chunks added", pdf.name, status["chunks_added"])
 
         _safe_persist(vectordb)
         _save_manifest(manifest)
@@ -189,6 +218,7 @@ def initialize_rag(*, rebuild: bool = False) -> dict:
         status["mode"] = "rebuild" if rebuild else "rebuild_initial"
         status["added_pdfs"] = len(pdfs)
         globals()["_vectordb"] = vectordb
+        logger.info("RAG initialization complete: %d PDFs, %d chunks total", status["pdf_total"], status["chunks_added"])
         return status
 
     # Incremental ingestion
@@ -228,10 +258,14 @@ def initialize_rag(*, rebuild: bool = False) -> dict:
 
 def rag_search(query: str, k: int = 4) -> str:
     """Perform a retrieval-augmented generation (RAG) search using the provided query."""
+    logger.info("RAG search called with query: %s", query)
+    #initialize_rag()  # Ensure RAG is initialized before searching
     if _vectordb is None:
+        logger.info("RAG vector store is not initialized; cannot perform search.")
         return ERR_RAG_NOT_INIT
 
     results = _vectordb.similarity_search(query, k=k)
+    logger.info("Found %d relevant chunks", len(results)) # To verify if results are being retrieved correctly
     if not results:
         return "No relevant information found."
 
@@ -242,6 +276,7 @@ def rag_search(query: str, k: int = 4) -> str:
         page0 = r.metadata.get("page", None)
         page = (page0 + 1) if isinstance(page0, int) else "N/A"
         text = (r.page_content or "").strip()
+        logger.info("Found %d relevant chunks", len(results)) # To verify if results are being retrieved correctly
         response_parts.append(f"**Source:** {src_name} | **Page:** {page}\n\n{text}")
 
     return "\n\n---\n\n".join(response_parts)
