@@ -22,14 +22,14 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from agenticcybersense.settings import settings
 
-ERR_NO_PDF: Final[str] = "No PDF documents found in ./data folder."
+DATA_PATH = settings.pdf_docs_dir
+ERR_NO_PDF: Final[str] = f"No PDF documents found in {DATA_PATH} folder."
 ERR_RAG_NOT_INIT: Final[str] = "RAG is not initialized. Please initialize the vector store first."
 ERR_MANIFEST_BAD: Final[str] = "Manifest is unreadable; resetting."
 
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent  # /src/agenticcybersense/rag
-DATA_PATH = settings.pdf_docs_dir
 logger.info("BASE_DIR: %s", BASE_DIR)
 logger.info("DATA_PATH: %s", DATA_PATH)
 logger.info("DATA_PATH exists: %s", DATA_PATH.exists())
@@ -177,10 +177,9 @@ def initialize_rag(*, rebuild: bool = False) -> dict:  # noqa: PLR0915
         except OSError as e:
             logger.warning("Could not remove DB directory %s: %s", DB_PATH, e)
         status["mode"] = "rebuild"
-    existing_db = globals().get("_vectordb")
 
     # Load existing DB if present (fast)
-    if DB_PATH.exists() and any(DB_PATH.iterdir()) and not rebuild and existing_db is not None:
+    if DB_PATH.exists() and any(DB_PATH.iterdir()) and not rebuild:
         vectordb = Chroma(
             persist_directory=str(DB_PATH),
             embedding_function=embeddings,
