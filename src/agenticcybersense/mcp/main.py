@@ -102,6 +102,14 @@ async def run_agent() -> None:
                 # Log the tool name(s) used in the response, if any
                 logger.info("Tools used in this response: %s", response["messages"][1].tool_calls[0]["name"])
                 logger.info("\n" + "-" * 45)  # noqa: G003
+                chunks = response["messages"][2].artifact["structured_content"]["result"].split("---")
+
+                for i, chunk in enumerate(chunks):
+                    if "**Source:**" in chunk and "**Page:**" in chunk:
+                        source = chunk.split("**Source:**")[1].split("|")[0].strip()
+                        page = chunk.split("**Page:**")[1].split("\n")[0].strip()
+                        logger.info("Chunk %d Source: %s", i + 1, source)
+                        logger.info("Chunk %d Page: %s", i + 1, page)
                 final_response = response["messages"][-1].content
                 # The agent's final response is what it would say to the user after processing the input and any tool calls.
                 # It should reflect the agent's reasoning and the results of any tools it used.
