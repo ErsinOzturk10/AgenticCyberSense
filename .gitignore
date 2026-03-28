@@ -17,4 +17,4 @@ venv
 .vscode
 
 # ignore data folders
-src/agenticcybersense/data/
+src/agenticcybersense/data/.DS_Store
