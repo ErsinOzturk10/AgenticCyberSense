@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 @dataclass
 class Settings:
@@ -39,6 +43,16 @@ class Settings:
 
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+
+    # Telegram client settings
+    tg_api_id: int = field(default_factory=lambda: int(os.getenv("TG_API_ID", "0")))
+    tg_api_hash: str = field(default_factory=lambda: os.getenv("TG_API_HASH", ""))
+    tg_session_name: str = field(default_factory=lambda: os.getenv("TG_SESSION_NAME", "agentic_telegram"))
+
+    # Agent / parser settings
+    telegram_keywords: str = field(default_factory=lambda: os.getenv("TELEGRAM_KEYWORDS", ""))  # comma-separated
+
+    # Ollama endpoints already present as ollama_base_url and ollama_model — reporter will use these.
 
     def __post_init__(self) -> None:
         """Ensure directories exist."""
