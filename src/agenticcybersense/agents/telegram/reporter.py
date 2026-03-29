@@ -144,7 +144,7 @@ def extract_username_from_url(url: str) -> str | None:
     return None
 
 
-def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: PLR0915, PLR0912, C901
     """Sanitize and normalize raw LLM JSON text into a stable findings dict."""
     parsed, method = parse_llm_json_text(llm_text)
 

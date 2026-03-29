@@ -204,7 +204,7 @@ class TelegramAgent(BaseAgent):
 
         return findings
 
-    async def process(self, request: AgentRequest) -> AgentResponse:
+    async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901
         """Process a Telegram intelligence query."""
         self.logger.info("Telegram agent processing: %s", request.query[:100])
 
