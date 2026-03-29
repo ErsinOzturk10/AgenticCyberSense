@@ -1,8 +1,9 @@
 """Telethon client wrapper for Telegram agent."""
 
-from telethon import TelegramClient, errors
-from typing import List, Any
 import logging
+from typing import Any
+
+from telethon import TelegramClient, errors
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ class TelegramClientWrapper:
         self.session_name = session_name
         self._client = TelegramClient(self.session_name, self.api_id, self.api_hash)
         self._started = False
-    
+
     async def __aenter__(self) -> "TelegramClientWrapper":
         await self.start()
         return self
@@ -34,7 +35,7 @@ class TelegramClientWrapper:
             self._started = False
             logger.debug("Telethon client disconnected")
 
-    async def fetch_channel_messages(self, channel_username: str, limit: int = 50) -> List[Any]:
+    async def fetch_channel_messages(self, channel_username: str, limit: int = 50) -> list[Any]:
         """Return list of Telethon Message objects for channel_username (public).
         If the channel is not found, returns empty list.
         """

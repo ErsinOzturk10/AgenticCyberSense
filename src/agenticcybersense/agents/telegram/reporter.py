@@ -11,7 +11,8 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import UTC
+from typing import Any
 
 import requests
 
@@ -50,7 +51,7 @@ def _extract_first_json_object(text: str) -> str:
     return s
 
 
-def parse_llm_json_text(llm_text: str) -> Tuple[Optional[Any], str]:
+def parse_llm_json_text(llm_text: str) -> tuple[Any | None, str]:
     candidate = _extract_first_json_object(llm_text)
     if not candidate:
         return None, "empty"
@@ -78,7 +79,7 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
     }
     session = requests.Session()
     session.trust_env = False
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
 
     for i in range(1, attempts + 1):
         try:
@@ -89,7 +90,7 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
             return text.strip()
         except Exception as e:
             last_err = e
-            sleep = RETRY_BACKOFF ** i
+            sleep = RETRY_BACKOFF**i
             print(f"Warning: Ollama call failed (attempt {i}/{attempts}): {e}. Retrying in {sleep}s...")
             time.sleep(sleep)
 
@@ -97,11 +98,11 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
     raise last_err  # type: ignore[misc]
 
 
-def _all_text_blob(rows: List[Dict[str, Any]]) -> str:
+def _all_text_blob(rows: list[dict[str, Any]]) -> str:
     return "\n".join((r.get("text_preview") or "").strip() for r in rows)
 
 
-def extract_username_from_url(url: str) -> Optional[str]:
+def extract_username_from_url(url: str) -> str | None:
     if not url:
         return None
     if URL_TME_C_RE.search(url):
@@ -113,14 +114,14 @@ def extract_username_from_url(url: str) -> Optional[str]:
     return None
 
 
-def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Sanitize and normalize raw LLM JSON text into a stable findings dict."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     parsed, method = parse_llm_json_text(llm_text)
 
-    data: Dict[str, Any] = {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    data: dict[str, Any] = {
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "findings": [],
     }
 
@@ -138,13 +139,9 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
     else:
         findings_raw = []
 
-    def fallback_channels() -> List[str]:
+    def fallback_channels() -> list[str]:
         return sorted(
-            {
-                (r.get("channel") or "").strip()
-                for r in fallback_rows
-                if (r.get("channel") or "").strip()
-            },
+            {(r.get("channel") or "").strip() for r in fallback_rows if (r.get("channel") or "").strip()},
         )
 
     def first_url_from_rows() -> str:
@@ -162,12 +159,9 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
     blob_l = text_blob.lower()
     input_mentions_poc = any(x in blob_l for x in (" poc", "proof of concept", "p.o.c"))
     input_mentions_0day = any(x in blob_l for x in ("0day", "zero-day", "zero day"))
-    input_mentions_exploited = any(
-        x in blob_l
-        for x in ("exploited", "in the wild", "actively exploited", "being exploited")
-    )
+    input_mentions_exploited = any(x in blob_l for x in ("exploited", "in the wild", "actively exploited", "being exploited"))
 
-    normalized: List[Dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
     for f in findings_raw:
         if not isinstance(f, dict):
             continue
@@ -198,11 +192,7 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
             cve_s = str(cve_val).strip().upper()
             cve_out = cve_s if cve_s in cves_in_input else None
 
-        source_urls = [
-            str(u).strip()
-            for u in (f.get("source_message_urls") or [])
-            if str(u).strip()
-        ]
+        source_urls = [str(u).strip() for u in (f.get("source_message_urls") or []) if str(u).strip()]
         if not source_urls and fb_url:
             source_urls = [fb_url]
 
@@ -218,11 +208,7 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
                 "cve": cve_out,
                 "exploit_status": exploit_status,
                 "source_message_urls": source_urls,
-                "evidence_quotes": [
-                    str(q).strip()
-                    for q in (f.get("evidence_quotes") or [])
-                    if str(q).strip()
-                ],
+                "evidence_quotes": [str(q).strip() for q in (f.get("evidence_quotes") or []) if str(q).strip()],
             },
         )
 
@@ -243,8 +229,8 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
         )
 
     # Basit dedupe: title veya ilk URL’ye göre birleştir
-    merged: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
     for item in normalized:
         key_title = (item.get("title") or "").strip().lower()
         first_url = (item.get("source_message_urls") or [None])[0] or ""
@@ -288,7 +274,7 @@ def sanitize_report(llm_text: str, fallback_rows: List[Dict[str, Any]]) -> Dict[
     return data
 
 
-def build_prompt_for_rows(rows: List[Dict[str, Any]]) -> str:
+def build_prompt_for_rows(rows: list[dict[str, Any]]) -> str:
     """Build LLM prompt from normalized rows."""
     prompt = f"""
 You are a CTI analyst. You will be given Telegram messages that matched security keywords.
@@ -300,13 +286,13 @@ Input messages:
     return prompt
 
 
-def summarize_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Main entrypoint: takes normalized rows (list of dicts) and returns sanitized findings dict."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if not rows:
         return {
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "generated_at_utc": datetime.now(UTC).isoformat(),
             "findings": [],
         }
 
