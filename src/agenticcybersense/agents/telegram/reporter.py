@@ -9,14 +9,17 @@ No file I/O. It uses settings.ollama_base_url and settings.ollama_model.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
 
 from agenticcybersense.settings import settings
+
+logger = logging.getLogger(__name__)
 
 MODEL_NAME = settings.ollama_model
 OLLAMA_URL = settings.ollama_base_url.rstrip("/") + "/api/generate"
@@ -52,21 +55,31 @@ def _extract_first_json_object(text: str) -> str:
 
 
 def parse_llm_json_text(llm_text: str) -> tuple[Any | None, str]:
+    """Try to extract and parse the first JSON object from LLM output.
+
+    Returns a tuple (obj_or_None, method_string).
+    """
     candidate = _extract_first_json_object(llm_text)
     if not candidate:
         return None, "empty"
+
+    # Try plain json.loads first
     try:
         obj = json.loads(candidate)
+    except json.JSONDecodeError as e:
+        logger.debug("json.loads on candidate failed: %s", e)
+    else:
         return obj, "json.loads"
-    except Exception:
-        pass
 
+    # Try replacing newlines with escaped newlines and parse again
     fixed = candidate.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
     try:
         obj = json.loads(fixed)
-        return obj, "escaped_newlines_then_json.loads"
-    except Exception as e:
+    except json.JSONDecodeError as e:
+        logger.debug("json.loads on escaped candidate failed: %s", e)
         return None, f"failed_to_parse: {type(e).__name__}: {e}"
+    else:
+        return obj, "escaped_newlines_then_json.loads"
 
 
 def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
@@ -88,10 +101,16 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
             obj = resp.json()
             text = obj.get("response") or ""
             return text.strip()
-        except Exception as e:
+        except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
             last_err = e
             sleep = RETRY_BACKOFF**i
-            print(f"Warning: Ollama call failed (attempt {i}/{attempts}): {e}. Retrying in {sleep}s...")
+            logger.warning(
+                "Warning: Ollama call failed (attempt %d/%d): %s. Retrying in %ds...",
+                i,
+                attempts,
+                e,
+                sleep,
+            )
             time.sleep(sleep)
 
     # All attempts failed
@@ -103,10 +122,21 @@ def _all_text_blob(rows: list[dict[str, Any]]) -> str:
 
 
 def extract_username_from_url(url: str) -> str | None:
+    """Extract a username from a Telegram URL.
+
+    Args:
+        url: A Telegram URL string to extract the username from.
+
+    Returns:
+        A string containing the username prefixed with '@' if found,
+        None if the URL is empty, is a t.me/c/... URL (which contains
+        numeric IDs instead of usernames), or no username is found.
+
+    """
     if not url:
         return None
     if URL_TME_C_RE.search(url):
-        # t.me/c/... URL'lerinde username yok, numeric id var
+        # t.me/c/... URLs don't contain a username; they contain numeric ids
         return None
     m = URL_USERNAME_RE.search(url)
     if m:
@@ -116,8 +146,6 @@ def extract_username_from_url(url: str) -> str | None:
 
 def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Sanitize and normalize raw LLM JSON text into a stable findings dict."""
-    from datetime import datetime
-
     parsed, method = parse_llm_json_text(llm_text)
 
     data: dict[str, Any] = {
@@ -212,8 +240,9 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
             },
         )
 
-    # Placeholder ile 5’e tamamla (dedupe öncesi)
-    while len(normalized) < 5:
+    # Fill up to 5 with placeholders (before dedupe)
+    max_findings = 5
+    while len(normalized) < max_findings:
         normalized.append(
             {
                 "title": f"Finding {len(normalized) + 1}",
@@ -228,7 +257,7 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
             },
         )
 
-    # Basit dedupe: title veya ilk URL’ye göre birleştir
+    # Simple dedupe: merge by title or first URL
     merged: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for item in normalized:
@@ -248,7 +277,7 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
                 if u and u not in e["source_message_urls"]:
                     e["source_message_urls"].append(u)
 
-            # severity: daha yüksek olanı koru
+            # severity: keep the higher severity
             sev_order = {"low": 0, "medium": 1, "high": 2}
             if sev_order.get(item.get("severity", "medium"), 1) > sev_order.get(
                 e.get("severity", "medium"),
@@ -258,7 +287,7 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
 
     deduped = [merged[k] for k in order]
 
-    # URL’den username türetebilirsek kanalı normalize et
+    # If we can extract a username from the URL, normalize the channel to that username
     for d in deduped:
         uname = None
         for u in d.get("source_message_urls", []):
@@ -276,20 +305,17 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
 
 def build_prompt_for_rows(rows: list[dict[str, Any]]) -> str:
     """Build LLM prompt from normalized rows."""
-    prompt = f"""
+    return f"""
 You are a CTI analyst. You will be given Telegram messages that matched security keywords.
 Return ONLY valid JSON (no markdown, no commentary) with fields:
 generated_at_utc, findings[ title, channels, severity, why_it_matters, key_technical_details, cve, exploit_status, source_message_urls, evidence_quotes ].
 Input messages:
 {json.dumps(rows, ensure_ascii=False, indent=2)}
 """.strip()
-    return prompt
 
 
 def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Main entrypoint: takes normalized rows (list of dicts) and returns sanitized findings dict."""
-    from datetime import datetime
-
+    """Summarize normalized rows and return sanitized findings dict."""
     if not rows:
         return {
             "generated_at_utc": datetime.now(UTC).isoformat(),
@@ -297,5 +323,6 @@ def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     prompt = build_prompt_for_rows(rows)
+
     llm_text = call_ollama_with_retries(prompt)
     return sanitize_report(llm_text, rows)
