@@ -7,6 +7,8 @@ from agenticcybersense.mcp.functions import age as age_module
 from agenticcybersense.mcp.functions import lastname_retrieval as lastname_module
 from agenticcybersense.mcp.functions import reverse_name as reverse_name_module
 from agenticcybersense.rag.rag import rag_search as _rag_search
+from agenticcybersense.agents.telegram import TelegramAgent
+from agenticcybersense.schemas.messages import AgentRequest
 
 # Initialize FastMCP server
 mcp = FastMCP("dummy-mcp-tools-server")
@@ -54,3 +56,24 @@ def rag_search(user_input: str) -> str:
     "Insufficient information in the provided documents."
     """
     return _rag_search(query=user_input)
+
+@mcp.tool()
+async def telegram_search(user_input: str) -> str:
+    """Search Telegram threat intelligence channels for cyber threats.
+
+    Use this tool when the user asks about:
+    - Recent cyber attacks or threat actor activity on Telegram
+    - CVEs or vulnerabilities mentioned in Telegram channels
+    - Leaked data, breach news, malware campaigns, APT activity
+
+    DO NOT use this tool for:
+    - General knowledge questions
+    - Topics unrelated to cybersecurity
+
+    If no relevant data is found, return:
+    "No relevant Telegram intelligence found."
+    """
+
+    agent = TelegramAgent()
+    response = await agent.process(AgentRequest(query=user_input))
+    return response.content
