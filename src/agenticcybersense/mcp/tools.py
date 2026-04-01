@@ -1,4 +1,4 @@
-"""MCP Server Tool."""
+"""MCP Server Tools."""
 
 from mcp.server.fastmcp import FastMCP
 
