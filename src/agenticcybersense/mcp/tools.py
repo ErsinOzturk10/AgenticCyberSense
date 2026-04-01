@@ -2,12 +2,13 @@
 
 from mcp.server.fastmcp import FastMCP
 
+from agenticcybersense.agents.telegram import TelegramAgent
+
 # Assuming these modules exist in your project structure
 from agenticcybersense.mcp.functions import age as age_module
 from agenticcybersense.mcp.functions import lastname_retrieval as lastname_module
 from agenticcybersense.mcp.functions import reverse_name as reverse_name_module
 from agenticcybersense.rag.rag import rag_search as _rag_search
-from agenticcybersense.agents.telegram import TelegramAgent
 from agenticcybersense.schemas.messages import AgentRequest
 
 # Initialize FastMCP server
@@ -57,6 +58,7 @@ def rag_search(user_input: str) -> str:
     """
     return _rag_search(query=user_input)
 
+
 @mcp.tool()
 async def telegram_search(user_input: str) -> str:
     """Search Telegram threat intelligence channels for cyber threats.
@@ -73,7 +75,6 @@ async def telegram_search(user_input: str) -> str:
     If no relevant data is found, return:
     "No relevant Telegram intelligence found."
     """
-
     agent = TelegramAgent()
     response = await agent.process(AgentRequest(query=user_input))
     return response.content

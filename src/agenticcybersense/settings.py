@@ -55,7 +55,6 @@ class Settings:
     # Agent / parser settings
     telegram_keywords: str = field(default_factory=lambda: os.getenv("TELEGRAM_KEYWORDS", ""))  # comma-separated
 
-
     def __post_init__(self) -> None:
         """Ensure directories exist."""
         self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
