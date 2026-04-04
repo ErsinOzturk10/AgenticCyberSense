@@ -18,3 +18,4 @@ venv
 
 # ignore data folders
 src/agenticcybersense/data/.DS_Store
+src/agenticcybersense/data/
