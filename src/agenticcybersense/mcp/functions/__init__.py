@@ -1,0 +1,1 @@
+"""Generate functions for MCP tools."""

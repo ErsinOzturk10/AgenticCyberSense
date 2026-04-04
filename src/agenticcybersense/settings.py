@@ -22,16 +22,23 @@ class Settings:
 
     # RAG Settings
     chroma_persist_dir: Path = field(
-        default_factory=lambda: Path(os.getenv("CHROMA_PERSIST_DIR", "./data/chroma_db")),
+        default_factory=lambda: Path(os.getenv("CHROMA_PERSIST_DIR", "./src/agenticcybersense/data/chroma_db")),
     )
     embedding_model: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
     )
-    pdf_docs_dir: Path = field(default_factory=lambda: Path(os.getenv("PDF_DOCS_DIR", "./data/documents")))
+    pdf_docs_dir: Path = field(default_factory=lambda: Path(os.getenv("PDF_DOCS_DIR", "./src/agenticcybersense/data/documents")))
 
     # MCP Settings
     mcp_server_host: str = field(default_factory=lambda: os.getenv("MCP_SERVER_HOST", "localhost"))
     mcp_server_port: int = field(default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8765")))
+    # Target URL for MCP clients / SSE endpoints
+    mcp_target_url: str = field(
+        default_factory=lambda: os.getenv(
+            "MCP_TARGET_URL",
+            "http://127.0.0.1:8000/mcp/sse",
+        ),
+    )
 
     # API Server Settings
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))  # noqa: S104
@@ -39,6 +46,14 @@ class Settings:
 
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+
+    # Telegram client settings
+    tg_api_id: int = field(default_factory=lambda: int(os.getenv("TG_API_ID", "0")))
+    tg_api_hash: str = field(default_factory=lambda: os.getenv("TG_API_HASH", ""))
+    tg_session_name: str = field(default_factory=lambda: os.getenv("TG_SESSION_NAME", "agentic_telegram"))
+
+    # Agent / parser settings
+    telegram_keywords: str = field(default_factory=lambda: os.getenv("TELEGRAM_KEYWORDS", ""))  # comma-separated
 
     def __post_init__(self) -> None:
         """Ensure directories exist."""
