@@ -29,6 +29,19 @@ class Settings:
     )
     pdf_docs_dir: Path = field(default_factory=lambda: Path(os.getenv("PDF_DOCS_DIR", "./src/agenticcybersense/data/documents")))
 
+    # Web-crawl RAG settings (ChromaDB + nomic-embed-text via Ollama)
+    web_chroma_persist_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("WEB_CHROMA_PERSIST_DIR", "./src/agenticcybersense/data/web_chroma_db")),
+    )
+    nomic_embed_model: str = field(
+        default_factory=lambda: os.getenv("NOMIC_EMBED_MODEL", "nomic-embed-text"),
+    )
+    web_chunk_size: int = field(default_factory=lambda: int(os.getenv("WEB_CHUNK_SIZE", "800")))
+    web_chunk_overlap: int = field(default_factory=lambda: int(os.getenv("WEB_CHUNK_OVERLAP", "150")))
+    web_collection_name: str = field(
+        default_factory=lambda: os.getenv("WEB_COLLECTION_NAME", "web_crawl"),
+    )
+
     # MCP Settings
     mcp_server_host: str = field(default_factory=lambda: os.getenv("MCP_SERVER_HOST", "localhost"))
     mcp_server_port: int = field(default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8765")))
@@ -59,6 +72,7 @@ class Settings:
         """Ensure directories exist."""
         self.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
         self.pdf_docs_dir.mkdir(parents=True, exist_ok=True)
+        self.web_chroma_persist_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Global settings instance
