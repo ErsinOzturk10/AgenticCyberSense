@@ -34,3 +34,11 @@ ENABLE_INCREMENTAL = True
 # True  = Hash kontrolünü atla, her zaman full crawl
 # False = Değişmemiş siteleri atla (önerilen)
 FORCE_FULL_CRAWL = False
+
+# RAG AYARLARI
+CHROMA_DB_PATH = "chroma_db"
+EMBED_MODEL = "nomic-embed-text"  # Ollama'da çalışır
+CHUNK_SIZE = 500        # kelime
+CHUNK_OVERLAP = 50      # kelime
+ENABLE_RAG = True       # False yapılırsa RAG indexleme atlanır
+RAG_TOP_K = 5           # Kaç sonuç dönsün

@@ -23,8 +23,10 @@ from config import (
     INACTIVITY_TIMEOUT,
     BLACKLIST, OUTPUT_FILE, HISTORY_FILE,
     ENABLE_INCREMENTAL, FORCE_FULL_CRAWL,
-    CONCURRENT_SITES,   # YENİ — config.py'ye ekleyin (aşağıda açıklanıyor)
+    CONCURRENT_SITES,
+    CHROMA_DB_PATH, EMBED_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, ENABLE_RAG,
 )
+from rag_indexer import RAGIndexer
 
 
 # ──────────────────────────────────────────────────────────────────── #
@@ -144,6 +146,7 @@ async def process_single_site(
     max_depth: int,
     inactivity_timeout: int,
     crawl_mode: str,
+    rag_indexer: RAGIndexer | None = None,
 ):
     async with site_semaphore:
         print(f"\n{'='*70}")
@@ -231,6 +234,14 @@ async def process_single_site(
                 print(f"   Link        : {total_links}")
                 print(f"   Süre        : {duration}s ({duration//60}dk {duration%60}s)")
 
+                # RAG indexleme — ENABLE_RAG açıksa crawl sonuçlarını vektör DB'ye yaz
+                if results and rag_indexer:
+                    try:
+                        indexed = rag_indexer.index_crawl_results(results, url)
+                        print(f"   RAG chunk   : {indexed}")
+                    except Exception as rag_err:
+                        print(f"   ⚠️  RAG indexleme hatası: {rag_err}")
+
         except Exception as e:
             err_msg   = str(e)[:200]
             duration  = (datetime.now() - site_start).seconds
@@ -279,6 +290,7 @@ async def main():
     print(f"   Incremental      : {ENABLE_INCREMENTAL}")
     print(f"   Force Full       : {FORCE_FULL_CRAWL}")
     print(f"   Kara liste       : {len(BLACKLIST)} site")
+    print(f"   RAG              : {'Açık' if ENABLE_RAG else 'Kapalı'}")
 
     print(f"\n📊 URL'ler yükleniyor: {EXCEL_PATH}")
     urls = load_urls_from_excel(EXCEL_PATH)
@@ -288,6 +300,17 @@ async def main():
 
     history     = CrawlHistoryManager(HISTORY_FILE) if ENABLE_INCREMENTAL else None
     all_results = load_existing_results(OUTPUT_FILE)
+
+    # RAG Indexer — ENABLE_RAG=False ise None olarak kalır
+    rag_indexer: RAGIndexer | None = None
+    if ENABLE_RAG:
+        rag_indexer = RAGIndexer(
+            chroma_db_path=CHROMA_DB_PATH,
+            embed_model=EMBED_MODEL,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
+        )
+        print(f"🧠 RAG Indexer hazır: {CHROMA_DB_PATH} ({EMBED_MODEL})")
 
     print(f"📂 Mevcut geçmiş  : {len(history.history) if history else 0} site")
     print(f"📂 Mevcut sonuçlar: {len(all_results)} site")
@@ -332,6 +355,7 @@ async def main():
             max_depth=MAX_DEPTH,
             inactivity_timeout=INACTIVITY_TIMEOUT,
             crawl_mode=crawl_mode,
+            rag_indexer=rag_indexer,
         )
         for i, url in enumerate(urls, 1)
     ]
@@ -350,6 +374,13 @@ async def main():
     print(f"\n📁 Sonuçlar : {OUTPUT_FILE}")
     if history:
         print(f"📜 Geçmiş   : {HISTORY_FILE}")
+    if rag_indexer:
+        rag_stats = rag_indexer.get_stats()
+        print(f"\n🧠 RAG İstatistikleri:")
+        print(f"   İndexlenen URL   : {rag_stats['total_urls']}")
+        print(f"   Toplam chunk     : {rag_stats['total_chunks']}")
+        print(f"   ChromaDB vektör  : {rag_stats['chroma_vectors']}")
+        print(f"   Embedding modeli : {rag_stats['embed_model']}")
 
     # Başarısız site analizi
     failed_sites: Dict[str, List[str]] = {}
