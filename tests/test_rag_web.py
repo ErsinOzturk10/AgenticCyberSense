@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 # Constants
 # ---------------------------------------------------------------------------
 
-EXPECTED_TWO: int = 2
+EXPECTED_COUNT_TWO: int = 2
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -104,7 +104,7 @@ class TestWebContentIngester:
         assert result["status"] == "updated"
         assert result["chunks"] >= 1
         mock_db.delete.assert_called_once()
-        assert mock_db.add_documents.call_count == EXPECTED_TWO  # once for add, once for update
+        assert mock_db.add_documents.call_count == EXPECTED_COUNT_TWO  # once for add, once for update
 
     def test_ingest_json_file(self, ingester_and_db: tuple[WebContentIngester, MagicMock], tmp_path: Path) -> None:
         """Ingesting a valid JSON crawl file should add all documents."""
@@ -117,8 +117,8 @@ class TestWebContentIngester:
         json_path.write_text(json.dumps(crawl_data), encoding="utf-8")
 
         summary = ingester.ingest_json_file(json_path)
-        assert summary["added"] == EXPECTED_TWO
-        assert summary["chunks"] >= EXPECTED_TWO
+        assert summary["added"] == EXPECTED_COUNT_TWO
+        assert summary["chunks"] >= EXPECTED_COUNT_TWO
 
     def test_ingest_json_file_missing_fields(self, ingester_and_db: tuple[WebContentIngester, MagicMock], tmp_path: Path) -> None:
         """Items without url/content should be counted as errors."""
@@ -144,8 +144,8 @@ class TestWebContentIngester:
         )
 
         totals = ingester.ingest_directory(tmp_path)
-        assert totals["files_processed"] == EXPECTED_TWO
-        assert totals["added"] == EXPECTED_TWO
+        assert totals["files_processed"] == EXPECTED_COUNT_TWO
+        assert totals["added"] == EXPECTED_COUNT_TWO
 
 
 # ---------------------------------------------------------------------------
