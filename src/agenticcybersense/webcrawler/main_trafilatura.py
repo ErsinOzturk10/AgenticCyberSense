@@ -266,7 +266,7 @@ async def main():
     print(f"   Eş zamanlı site  : {CONCURRENT_SITES}")
     print("=" * 80)
 
-    EXCEL_PATH   = "config/sites.xlsx"
+    EXCEL_PATH   = str(Path(__file__).parent / "config" / "sites.xlsx")
     MAX_DEPTH    = 1
     OLLAMA_MODEL = "gemma3:12b"
 
