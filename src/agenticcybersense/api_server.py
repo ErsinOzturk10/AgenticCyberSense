@@ -34,6 +34,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Port: %s", settings.api_port)
     logger.info("=" * 60)
 
+    # Initialize RAG vector store so DocumentationAgent can retrieve documents
+    try:
+        from agenticcybersense.rag.rag import initialize_rag  # noqa: PLC0415
+
+        status = initialize_rag(rebuild=False)
+        logger.info("✅ RAG initialized: %s", status)
+    except Exception:
+        logger.exception("❌ RAG initialization failed (documentation agent will be limited)")
+
     try:
         from agenticcybersense.graph.build_graph import build_graph  # noqa: PLC0415
 

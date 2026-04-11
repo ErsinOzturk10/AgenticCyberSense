@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Any, Self
 if TYPE_CHECKING:
     import types  # moved into TYPE_CHECKING to satisfy TC003 (used only for annotations)
 
-from telethon import TelegramClient, errors
+try:
+    from telethon import TelegramClient, errors
+except ImportError:  # telethon is optional
+    TelegramClient = None  # type: ignore[assignment,misc]
+    errors = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
