@@ -1,64 +1,52 @@
-"""
-Trafilatura + Ollama Agent — SharedBrowser desteği eklendi (v2)
+"""Trafilatura + Ollama extraction agent with SharedBrowser support."""
 
-Değişiklikler:
-  - SharedBrowser: tek bir Chromium process, çok sayıda context
-    → Her URL için browser launch/close maliyeti ortadan kalkar
-  - TrafilaturaOllamaAgent(shared_browser=...) parametresi eklendi
-  - Geriye dönük uyumlu: shared_browser verilmezse eski davranış
-"""
+from __future__ import annotations
 
-from typing import Dict, Any, List, Optional, Tuple
-from dataclasses import dataclass
-import json
 import asyncio
-import os
-import httpx
-import re
-from datetime import datetime
-from playwright.async_api import async_playwright, Browser, BrowserContext
-import trafilatura
+import json
+import logging
 import random
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
+import httpx
+import trafilatura
+from playwright.async_api import Browser, BrowserContext, async_playwright
 
-# ══════════════════════════════════════════════════════════════════════ #
-#  SharedBrowser — tek process, paylaşımlı context havuzu               #
-# ══════════════════════════════════════════════════════════════════════ #
+logger = logging.getLogger(__name__)
+
 
 class SharedBrowser:
-    """
-    Uygulama ömrü boyunca yaşayan tek bir Chromium instance.
-    Her URL çağrısı yeni bir context açar, bitince kapatır.
-    Browser'ın kendisi kapatılmaz → launch maliyeti sadece 1 kez ödenir.
-
-    max_concurrent_pages: aynı anda kaç sayfa açık olabilir
-    """
+    """A single Chromium instance reused across crawls."""
 
     def __init__(self, max_concurrent_pages: int = 5):
-        self._pw             = None
-        self._browser: Optional[Browser] = None
-        self._semaphore      = asyncio.Semaphore(max_concurrent_pages)
-        self._started        = False
-        self._launch_args    = [
+        self._pw = None
+        self._browser: Browser | None = None
+        self._semaphore = asyncio.Semaphore(max_concurrent_pages)
+        self._started = False
+        self._launch_args = [
             "--disable-blink-features=AutomationControlled",
             "--disable-dev-shm-usage",
             "--no-sandbox",
             "--disable-gpu",
         ]
 
-    async def start(self):
-        """Browser'ı başlat (main.py'de bir kez çağrılır)."""
+    async def start(self) -> None:
+        """Start the browser once."""
         if self._started:
             return
-        self._pw      = await async_playwright().start()
+        self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.launch(
-            headless=True, args=self._launch_args
+            headless=True,
+            args=self._launch_args,
         )
         self._started = True
-        print("🟢 SharedBrowser başlatıldı")
+        logger.info("SharedBrowser started")
 
-    async def stop(self):
-        """Tüm crawl bittiğinde çağrılır."""
+    async def stop(self) -> None:
+        """Stop the browser."""
         if self._browser:
             await self._browser.close()
             self._browser = None
@@ -66,18 +54,16 @@ class SharedBrowser:
             await self._pw.stop()
             self._pw = None
         self._started = False
-        print("🔴 SharedBrowser durduruldu")
+        logger.info("SharedBrowser stopped")
 
     async def new_context(self, user_agent: str) -> BrowserContext:
-        """Yeni bir izole browser context döndür."""
+        """Create a new isolated browser context."""
         ctx = await self._browser.new_context(
             user_agent=user_agent,
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
         )
-        await ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
+        await ctx.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
         return ctx
 
     @property
@@ -89,20 +75,16 @@ class SharedBrowser:
         return self._started
 
 
-# ══════════════════════════════════════════════════════════════════════ #
-#  ExtractionResult                                                      #
-# ══════════════════════════════════════════════════════════════════════ #
-
 @dataclass
 class ExtractionResult:
     url: str
-    title: Optional[str] = None
-    main_content: Optional[str] = None
-    metadata: Dict[str, Any] = None
-    links: List[str] = None
-    structured_data: Dict[str, Any] = None
+    title: str | None = None
+    main_content: str | None = None
+    metadata: dict[str, Any] | None = None
+    links: list[str] | None = None
+    structured_data: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.metadata is None:
             self.metadata = {}
         if self.links is None:
@@ -110,7 +92,7 @@ class ExtractionResult:
         if self.structured_data is None:
             self.structured_data = {}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "url": self.url,
             "title": self.title,
@@ -121,92 +103,70 @@ class ExtractionResult:
         }
 
 
-# ══════════════════════════════════════════════════════════════════════ #
-#  TrafilaturaOllamaAgent                                                #
-# ══════════════════════════════════════════════════════════════════════ #
-
 class TrafilaturaOllamaAgent:
-    """
-    PRODUCTION AGENT:
-    - Static-first (hızlı)
-    - Playwright fallback (JS gereken siteler)
-    - SharedBrowser ile browser yeniden kullanımı
-    - Ollama IOC extraction (threat_intel tipi için)
-    """
+    """Production extraction agent with static and browser fallback."""
 
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     ]
 
     def __init__(
         self,
         model: str = "gemma3:12b",
         base_url: str = "http://localhost:11434",
-        shared_browser: Optional[SharedBrowser] = None,
+        shared_browser: SharedBrowser | None = None,
     ):
-        self.model          = model
-        self.base_url       = base_url
-        self.api_url        = f"{base_url}/api/generate"
-        self.shared_browser = shared_browser  # None → fallback eski davranış
+        self.model = model
+        self.base_url = base_url
+        self.api_url = f"{base_url}/api/generate"
+        self.shared_browser = shared_browser
         self._check_ollama()
 
-    # ------------------------------------------------------------------ #
-    # Ollama kontrolü                                                     #
-    # ------------------------------------------------------------------ #
-
-    def _check_ollama(self):
+    def _check_ollama(self) -> None:
         try:
             response = httpx.get(f"{self.base_url}/api/tags", timeout=5.0)
             if response.status_code == 200:
                 names = [m["name"] for m in response.json().get("models", [])]
                 if self.model not in names:
-                    print(f"⚠️  Model '{self.model}' bulunamadı! → ollama pull {self.model}")
+                    logger.warning("Model '%s' not found. Run: ollama pull %s", self.model, self.model)
                 else:
-                    print(f"✅ Ollama çalışıyor, model: {self.model}")
-        except Exception as e:
-            print(f"⚠️  Ollama bağlantısı yok (IOC extraction devre dışı): {e}")
+                    logger.info("Ollama is running, model: %s", self.model)
+        except Exception as exc:
+            logger.warning("No Ollama connection (IOC extraction disabled): %s", exc)
 
-    # ------------------------------------------------------------------ #
-    # Ana extraction girişi                                               #
-    # ------------------------------------------------------------------ #
-
-    async def extract_from_url(
-        self,
-        url: str,
-        extraction_type: str = "general",
-    ) -> ExtractionResult:
+    async def extract_from_url(self, url: str, extraction_type: str = "general") -> ExtractionResult:
         start_time = datetime.now()
-        print(f"    🎯 Extracting: {url[:80]}...")
+        logger.info("Extracting: %s...", url[:80])
 
         for attempt in range(2):
             try:
                 if attempt > 0:
-                    print(f"    🔄 Retry {attempt + 1}/2...")
+                    logger.info("Retry %s/2...", attempt + 1)
                     await asyncio.sleep(random.uniform(2, 4))
 
                 requires_js = self._requires_javascript(url)
 
-                # Static önce (JS gerektirmiyorsa ve ilk deneme)
                 if not requires_js and attempt == 0:
-                    print(f"    📄 Static fetch deneniyor...")
+                    logger.info("Trying static fetch...")
                     html, title, links = self._fetch_static(url)
                     if html and len(html) > 5000:
                         content = self._extract_with_trafilatura(html, url)
                         if content and len(content) > 200:
-                            print(f"    ✅ Static başarılı!")
+                            logger.info("Static extraction successful")
                             return self._build_result(
-                                url, title, content, links,
-                                extraction_type, start_time, "static",
+                                url,
+                                title,
+                                content,
+                                links,
+                                extraction_type,
+                                start_time,
+                                "static",
                             )
-                    print(f"    ⚠️  Static yetersiz, Playwright'a geçiliyor...")
+                    logger.warning("Static extraction insufficient, switching to Playwright")
 
-                # Playwright (SharedBrowser varsa paylaşımlı, yoksa eski yol)
-                print(f"    🌐 Playwright (stealth mode)...")
+                logger.info("Using Playwright (stealth mode)...")
                 html, title, links = await self._fetch_with_playwright(url)
 
                 if not html:
@@ -214,7 +174,10 @@ class TrafilaturaOllamaAgent:
                         continue
                     return ExtractionResult(
                         url=url,
-                        metadata={"error": "Retry sonrası fetch başarısız", "status": "failed"},
+                        metadata={
+                            "error": "Fetch failed after retry",
+                            "status": "failed",
+                        },
                     )
 
                 content = self._extract_with_trafilatura(html, url)
@@ -223,8 +186,13 @@ class TrafilaturaOllamaAgent:
 
                 if content and len(content) > 100:
                     return self._build_result(
-                        url, title, content, links,
-                        extraction_type, start_time, "playwright",
+                        url,
+                        title,
+                        content,
+                        links,
+                        extraction_type,
+                        start_time,
+                        "playwright",
                     )
 
                 if attempt == 0:
@@ -235,50 +203,50 @@ class TrafilaturaOllamaAgent:
                     title=title,
                     main_content=content or "",
                     links=links,
-                    metadata={"error": "İçerik çok kısa", "status": "partial", "method": "playwright"},
+                    metadata={
+                        "error": "Content too short",
+                        "status": "partial",
+                        "method": "playwright",
+                    },
                 )
-
-            except Exception as e:
+            except Exception as exc:
                 if attempt == 0:
-                    print(f"    ⚠️  Deneme başarısız: {str(e)[:50]}")
+                    logger.warning("First attempt failed: %s", str(exc)[:80])
                     continue
-                print(f"    ❌ Tüm denemeler başarısız: {str(e)[:80]}")
+                logger.exception("All attempts failed")
                 return ExtractionResult(
                     url=url,
-                    metadata={"error": str(e)[:200], "status": "failed"},
+                    metadata={
+                        "error": str(exc)[:200],
+                        "status": "failed",
+                    },
                 )
 
         return ExtractionResult(
             url=url,
-            metadata={"error": "Max retry aşıldı", "status": "failed"},
+            metadata={
+                "error": "Max retries exceeded",
+                "status": "failed",
+            },
         )
 
-    # ------------------------------------------------------------------ #
-    # Playwright — SharedBrowser veya standalone                          #
-    # ------------------------------------------------------------------ #
-
-    async def _fetch_with_playwright(
-        self, url: str
-    ) -> Tuple[Optional[str], Optional[str], List[str]]:
+    async def _fetch_with_playwright(self, url: str) -> tuple[str | None, str | None, list[str]]:
         try:
             return await asyncio.wait_for(
                 self._fetch_playwright_internal(url),
                 timeout=150.0,
             )
-        except asyncio.TimeoutError:
-            print(f"    ⏱️  Timeout (150s)")
+        except TimeoutError:
+            logger.warning("Timeout (150s)")
             return None, None, []
         except Exception:
+            logger.exception("Playwright fetch failed")
             return None, None, []
 
-    async def _fetch_playwright_internal(
-        self, url: str
-    ) -> Tuple[str, Optional[str], List[str]]:
-
+    async def _fetch_playwright_internal(self, url: str) -> tuple[str, str | None, list[str]]:
         ua = random.choice(self.USER_AGENTS)
 
         if self.shared_browser and self.shared_browser.is_started:
-            # ── Paylaşımlı browser: sadece context aç/kapat ──────────── #
             async with self.shared_browser.semaphore:
                 context = await self.shared_browser.new_context(user_agent=ua)
                 try:
@@ -286,7 +254,6 @@ class TrafilaturaOllamaAgent:
                 finally:
                     await context.close()
         else:
-            # ── Geriye dönük uyumluluk: standalone browser ─────────────  #
             async with async_playwright() as p:
                 browser = await p.chromium.launch(
                     headless=True,
@@ -301,22 +268,18 @@ class TrafilaturaOllamaAgent:
                     viewport={"width": 1920, "height": 1080},
                     locale="en-US",
                 )
-                await context.add_init_script(
-                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-                )
+                await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
                 try:
                     return await self._run_page(context, url)
                 finally:
                     await browser.close()
 
-    async def _run_page(
-        self, context: BrowserContext, url: str
-    ) -> Tuple[str, Optional[str], List[str]]:
-        """Verilen context üzerinde sayfayı yükle ve içeriği al."""
+    async def _run_page(self, context: BrowserContext, url: str) -> tuple[str, str | None, list[str]]:
+        """Load the page and extract content."""
         page = await context.new_page()
         await self._dismiss_cookie_banners(page)
 
-        print(f"    ⏳ Yükleniyor (90s)...")
+        logger.info("Loading page (90s timeout)...")
         try:
             await page.goto(url, wait_until="networkidle", timeout=90000)
         except Exception:
@@ -326,101 +289,116 @@ class TrafilaturaOllamaAgent:
                 await page.close()
                 return "", None, []
 
-        print(f"    ⏳ JS render bekleniyor (5s)...")
+        logger.info("Waiting for JS rendering (5s)...")
         await page.wait_for_timeout(5000)
         await self._dismiss_cookie_banners(page)
         await self._wait_for_content(page, url)
 
-        # Lazy-load için scroll
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         await page.wait_for_timeout(2000)
         await page.evaluate("window.scrollTo(0, 0)")
         await page.wait_for_timeout(1000)
 
-        html  = await page.content()
+        html = await page.content()
         title = await page.title()
 
         if "Loading..." in html[:1000] or len(html) < 5000:
-            print(f"    ⚠️  Extra 5s bekleniyor...")
+            logger.warning("Waiting an additional 5s for content...")
             await page.wait_for_timeout(5000)
             html = await page.content()
 
-        print(f"    ✅ {len(html):,} bytes")
+        logger.info("Fetched %s bytes", f"{len(html):,}")
         links = await self._extract_links_with_playwright(page, url)
         await page.close()
 
         return html, title, links
 
-    # ------------------------------------------------------------------ #
-    # Yardımcı metodlar (değişmedi)                                       #
-    # ------------------------------------------------------------------ #
-
     def _requires_javascript(self, url: str) -> bool:
         url_lower = url.lower()
-        js_sites  = [
-            "alienvault.com", "virustotal.com", "shodan.io", "greynoise.io",
-            "any.run", "criminalip.io", "hudsonrock.com",
-            "socradar.io", "solarwinds.com", "att.com", "disinfox.com",
-            "app.", "dashboard.", "console.", "portal.",
-            "/app/", "/dashboard/", "/console/", "/portal/",
+        js_sites = [
+            "alienvault.com",
+            "virustotal.com",
+            "shodan.io",
+            "greynoise.io",
+            "any.run",
+            "criminalip.io",
+            "hudsonrock.com",
+            "socradar.io",
+            "solarwinds.com",
+            "att.com",
+            "disinfox.com",
+            "app.",
+            "dashboard.",
+            "console.",
+            "portal.",
+            "/app/",
+            "/dashboard/",
+            "/console/",
+            "/portal/",
         ]
         return any(ind in url_lower for ind in js_sites)
 
-    def _fetch_static(self, url: str) -> Tuple[Optional[str], Optional[str], List[str]]:
+    def _fetch_static(self, url: str) -> tuple[str | None, str | None, list[str]]:
         try:
-            ua         = random.choice(self.USER_AGENTS)
-            downloaded = trafilatura.fetch_url(
-                url, config={"USER_AGENT": ua}
-            )
+            ua = random.choice(self.USER_AGENTS)
+            downloaded = trafilatura.fetch_url(url, config={"USER_AGENT": ua})
             if not downloaded:
                 return None, None, []
-            links    = self._extract_links_from_html(downloaded, url)
+            links = self._extract_links_from_html(downloaded, url)
             metadata = trafilatura.extract_metadata(downloaded)
-            title    = metadata.title if metadata else None
+            title = metadata.title if metadata else None
             return downloaded, title, links
         except Exception:
+            logger.exception("Static fetch failed")
             return None, None, []
 
     def _build_result(
-        self, url, title, content, links, extraction_type, start_time, method
+        self,
+        url: str,
+        title: str | None,
+        content: str,
+        links: list[str],
+        extraction_type: str,
+        start_time: datetime,
+        method: str,
     ) -> ExtractionResult:
-        structured_data = {}
+        structured_data: dict[str, Any] = {}
         if extraction_type == "threat_intel" and len(content) > 200:
-            print(f"    🔍 IOC çıkarılıyor...")
+            logger.info("Extracting IOCs...")
             try:
                 loop = asyncio.get_event_loop()
                 structured_data = loop.run_until_complete(
-                    self._extract_iocs_with_ollama(content)
+                    self._extract_iocs_with_ollama(content),
                 )
             except Exception:
                 structured_data = self._empty_structured_data()
 
-        result             = ExtractionResult(url=url)
-        result.title       = title
+        result = ExtractionResult(url=url)
+        result.title = title
         result.main_content = content
-        result.links        = links
+        result.links = links
         result.structured_data = structured_data
-        result.metadata     = {
+        result.metadata = {
             "extraction_type": extraction_type,
-            "method":          method,
-            "model":           self.model if structured_data else None,
-            "status":          "success",
-            "content_length":  len(content),
-            "link_count":      len(links),
+            "method": method,
+            "model": self.model if structured_data else None,
+            "status": "success",
+            "content_length": len(content),
+            "link_count": len(links),
             "duration_seconds": (datetime.now() - start_time).seconds,
         }
-        print(f"    ✅ {len(content):,} chars, {len(links)} link")
+        logger.info("Extraction successful: %s chars, %s links", f"{len(content):,}", len(links))
         return result
 
-    async def _wait_for_content(self, page, url: str):
+    async def _wait_for_content(self, page, url: str) -> None:
         url_lower = url.lower()
         selectors_map = {
             "alienvault.com": [".pulse-list", '[class*="pulse"]'],
             "virustotal.com": ['[class*="report"]', ".vt-ui-main"],
-            "shodan.io":      [".search-result", ".banner"],
-            "any.run":        [".report", '[class*="analysis"]'],
-            "criminalip.io":  [".scan-result", '[class*="scan"]'],
-            "socradar.io":    [".threat", '[class*="threat"]'],
+            "shodan.io": [".search-result", ".banner"],
+            "any.run": [".report", '[class*="analysis"]'],
+            "criminalip.io": [".scan-result", '[class*="scan"]'],
+            "socradar.io": [".threat", '[class*="threat"]'],
             "hudsonrock.com": [".content", '[class*="data"]'],
         }
         for domain, selectors in selectors_map.items():
@@ -435,12 +413,16 @@ class TrafilaturaOllamaAgent:
                 return
         await page.wait_for_timeout(3000)
 
-    async def _dismiss_cookie_banners(self, page):
+    async def _dismiss_cookie_banners(self, page) -> None:
         from playwright._impl._errors import TargetClosedError
+
         selectors = [
-            'button:has-text("Accept")', 'button:has-text("I agree")',
-            'button:has-text("OK")',     'button:has-text("Allow")',
-            '[id*="cookie"] button',     '[class*="cookie"] button',
+            'button:has-text("Accept")',
+            'button:has-text("I agree")',
+            'button:has-text("OK")',
+            'button:has-text("Allow")',
+            '[id*="cookie"] button',
+            '[class*="cookie"] button',
         ]
         for sel in selectors:
             try:
@@ -450,14 +432,15 @@ class TrafilaturaOllamaAgent:
                     await page.wait_for_timeout(1000)
                     break
             except TargetClosedError:
-                return  # Sayfa/context kapandı, sessizce çık
+                return
             except Exception:
                 continue
 
-    async def _extract_links_with_playwright(self, page, base_url: str) -> List[str]:
+    async def _extract_links_with_playwright(self, page, base_url: str) -> list[str]:
         from urllib.parse import urljoin, urlparse
+
         base_domain = urlparse(base_url).netloc
-        links = []
+        links: list[str] = []
         try:
             elements = await page.query_selector_all("a[href]")
             for elem in elements[:200]:
@@ -469,41 +452,48 @@ class TrafilaturaOllamaAgent:
                         if clean and clean != base_url and clean not in links:
                             links.append(clean)
         except Exception:
-            pass
+            logger.exception("Failed to extract links with Playwright")
         return links
 
-    def _extract_links_from_html(self, html: str, base_url: str) -> List[str]:
+    def _extract_links_from_html(self, html: str, base_url: str) -> list[str]:
         from urllib.parse import urljoin, urlparse
+
         from bs4 import BeautifulSoup
+
         base_domain = urlparse(base_url).netloc
-        links = []
+        links: list[str] = []
         try:
             soup = BeautifulSoup(html, "html.parser")
-            for a in soup.find_all("a", href=True):
-                abs_url = urljoin(base_url, a["href"])
+            for anchor in soup.find_all("a", href=True):
+                abs_url = urljoin(base_url, anchor["href"])
                 if urlparse(abs_url).netloc == base_domain:
                     clean = abs_url.split("#")[0].split("?")[0]
                     if clean and clean != base_url and clean not in links:
                         links.append(clean)
         except Exception:
-            pass
+            logger.exception("Failed to extract links from HTML")
         return links[:200]
 
     def _extract_with_trafilatura(self, html: str, url: str) -> str:
         try:
-            return trafilatura.extract(
-                html,
-                include_comments=False,
-                include_tables=True,
-                no_fallback=False,
-                favor_precision=False,
-                url=url,
-            ) or ""
+            return (
+                trafilatura.extract(
+                    html,
+                    include_comments=False,
+                    include_tables=True,
+                    no_fallback=False,
+                    favor_precision=False,
+                    url=url,
+                )
+                or ""
+            )
         except Exception:
+            logger.exception("Trafilatura extraction failed")
             return ""
 
     def _fallback_extraction(self, html: str) -> str:
         from bs4 import BeautifulSoup
+
         try:
             soup = BeautifulSoup(html, "html.parser")
             for tag in soup(["script", "style", "nav", "footer", "header"]):
@@ -511,12 +501,13 @@ class TrafilaturaOllamaAgent:
             text = soup.get_text(separator=" ", strip=True)
             return re.sub(r"\s+", " ", text)
         except Exception:
+            logger.exception("Fallback extraction failed")
             return ""
 
-    async def _extract_iocs_with_ollama(self, content: str) -> Dict[str, Any]:
+    async def _extract_iocs_with_ollama(self, content: str) -> dict[str, Any]:
         preview = content[:20000]
-        prompt  = (
-            'Extract IOCs. Return ONLY JSON:\n'
+        prompt = (
+            "Extract IOCs. Return ONLY JSON:\n"
             '{"iocs": {"ips": [], "domains": [], "hashes": []}, '
             '"cves": [], "malware": [], "threat_actors": []}\n\n'
             f"Text: {preview}"
@@ -528,13 +519,15 @@ class TrafilaturaOllamaAgent:
                 if parsed and "iocs" in parsed:
                     return parsed
         except Exception:
-            pass
+            logger.exception("IOC extraction failed")
         return self._empty_structured_data()
 
-    def _empty_structured_data(self) -> Dict[str, Any]:
+    def _empty_structured_data(self) -> dict[str, Any]:
         return {
             "iocs": {"ips": [], "domains": [], "hashes": []},
-            "cves": [], "malware": [], "threat_actors": [],
+            "cves": [],
+            "malware": [],
+            "threat_actors": [],
         }
 
     async def _call_ollama(self, prompt: str, max_tokens: int) -> str:
@@ -543,18 +536,22 @@ class TrafilaturaOllamaAgent:
                 resp = await client.post(
                     self.api_url,
                     json={
-                        "model":   self.model,
-                        "prompt":  prompt,
-                        "stream":  False,
-                        "format":  "json",
-                        "options": {"temperature": 0, "num_predict": max_tokens},
+                        "model": self.model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "format": "json",
+                        "options": {
+                            "temperature": 0,
+                            "num_predict": max_tokens,
+                        },
                     },
                 )
             return resp.json().get("response", "") if resp.status_code == 200 else ""
         except Exception:
+            logger.exception("Ollama call failed")
             return ""
 
-    def _parse_json_robust(self, text: str) -> Dict[str, Any]:
+    def _parse_json_robust(self, text: str) -> dict[str, Any]:
         if not text:
             return {}
         try:
@@ -567,31 +564,25 @@ class TrafilaturaOllamaAgent:
             except Exception:
                 pass
         try:
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            if m:
-                return json.loads(m.group(0))
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
         except Exception:
             pass
         return {}
 
-    async def extract_batch(
-        self, urls: List[str], extraction_types: List[str]
-    ) -> List[ExtractionResult]:
-        results = []
+    async def extract_batch(self, urls: list[str], extraction_types: list[str]) -> list[ExtractionResult]:
+        results: list[ExtractionResult] = []
         for i, (url, ext_type) in enumerate(zip(urls, extraction_types), 1):
-            print(f"\n  📄 [{i}/{len(urls)}] {url[:80]}...")
+            logger.info("[%s/%s] %s...", i, len(urls), url[:80])
             result = await self.extract_from_url(url, ext_type)
-            status = "✅" if result.metadata.get("status") == "success" else "❌"
-            print(f"  {status} {len(result.main_content or ''):,} chars")
+            status = "success" if result.metadata.get("status") == "success" else "failed"
+            logger.info("Result: %s chars, status=%s", len(result.main_content or ""), status)
             results.append(result)
             if i < len(urls):
                 await asyncio.sleep(random.uniform(1, 2))
         return results
 
-
-# ══════════════════════════════════════════════════════════════════════ #
-#  SmartExtractionAgent (değişmedi)                                      #
-# ══════════════════════════════════════════════════════════════════════ #
 
 class SmartExtractionAgent:
     def __init__(self, agent: TrafilaturaOllamaAgent):
@@ -601,17 +592,29 @@ class SmartExtractionAgent:
         url_lower = url.lower()
         if "github.com" in url_lower:
             return "github"
-        if any(kw in url_lower for kw in [
-            "threat", "security", "malware", "cve", "attack.mitre",
-            "alienvault", "virustotal", "shodan", "criminalip",
-        ]):
+        if any(
+            kw in url_lower
+            for kw in [
+                "threat",
+                "security",
+                "malware",
+                "cve",
+                "attack.mitre",
+                "alienvault",
+                "virustotal",
+                "shodan",
+                "criminalip",
+            ]
+        ):
             return "threat_intel"
         return "general"
 
-    async def smart_extract_batch(self, urls: List[str]) -> List["ExtractionResult"]:
+    async def smart_extract_batch(self, urls: list[str]) -> list[ExtractionResult]:
         extraction_types = [self.detect_extraction_type(u) for u in urls]
         from collections import Counter
-        print("\n📊 Tip dağılımı:")
+
+        logger.info("Extraction type distribution:")
         for t, c in Counter(extraction_types).items():
-            print(f"   {t}: {c}")
+            logger.info("   %s: %s", t, c)
+
         return await self.agent.extract_batch(urls, extraction_types)

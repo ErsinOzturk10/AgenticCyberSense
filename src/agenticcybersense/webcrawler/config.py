@@ -1,36 +1,32 @@
-"""
-Configuration — v2
-"""
+"""Webcrawler configuration."""
 
-# BLACKLIST
-BLACKLIST = [
-   
-]
+# Blacklisted URLs that must not be crawled.
+BLACKLIST: list[str] = []
 
-# DEPTH LIMITS
-DEPTH_LIMITS = {
-    0: None,   # Depth 0: SINIRSIZ
-    1: 10,     # Depth 1: Random 10 link
-    2: 0,      # Depth 2: Yok
+# Depth limits per crawl level.
+# None means unlimited.
+DEPTH_LIMITS: dict[int, int | None] = {
+    0: None,  # Depth 0: unlimited
+    1: 10,  # Depth 1: randomly crawl up to 10 links
+    2: 0,  # Depth 2: disabled
 }
 
-# ── YENİ: Eş zamanlı site sayısı ─────────────────────────────────── #
-#  Kaç site paralel işlensin?
-#  - Düşük RAM / zayıf CPU → 2
-#  - Orta donanım          → 3  (önerilen)
-#  - Güçlü GPU sunucu      → 5
-#  Not: Ollama tek thread çalışır; asıl kazanım Playwright/network tarafında.
+# Concurrent site count.
+# - Low RAM / weak CPU -> 2
+# - Mid-range machine  -> 3 (recommended)
+# - Strong server      -> 5
 CONCURRENT_SITES = 3
 
+# Timeout for inactive crawls in seconds.
 INACTIVITY_TIMEOUT = 180
-# OUTPUT
-OUTPUT_FILE  = "output/latest_results.json"
-HISTORY_FILE = "crawl_history.db"   # artık SQLite, .json değil
 
-# INCREMENTAL CRAWLING
+# Output paths.
+OUTPUT_FILE = "output/latest_results.json"
+HISTORY_FILE = "output/crawl_history.db"
+
+# Incremental crawling.
 ENABLE_INCREMENTAL = True
 
-# FORCE FULL CRAWL
-# True  = Hash kontrolünü atla, her zaman full crawl
-# False = Değişmemiş siteleri atla (önerilen)
+# True  = ignore hash checks and always crawl everything
+# False = skip unchanged sites
 FORCE_FULL_CRAWL = False
