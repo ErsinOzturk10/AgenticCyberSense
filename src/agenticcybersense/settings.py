@@ -22,12 +22,12 @@ class Settings:
 
     # RAG Settings
     chroma_persist_dir: Path = field(
-        default_factory=lambda: Path(os.getenv("CHROMA_PERSIST_DIR", "./src/agenticcybersense/data/chroma_db")),
+        default_factory=lambda: Path(os.getenv("CHROMA_PERSIST_DIR", "./data/chroma_db")),
     )
     embedding_model: str = field(
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"),
     )
-    pdf_docs_dir: Path = field(default_factory=lambda: Path(os.getenv("PDF_DOCS_DIR", "./src/agenticcybersense/data/documents")))
+    pdf_docs_dir: Path = field(default_factory=lambda: Path(os.getenv("PDF_DOCS_DIR", "./data/documents")))
 
     # MCP Settings
     mcp_server_host: str = field(default_factory=lambda: os.getenv("MCP_SERVER_HOST", "localhost"))

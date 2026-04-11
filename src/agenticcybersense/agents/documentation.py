@@ -18,28 +18,11 @@ class DocumentationAgent(BaseAgent):
     name: str = "documentation"
     description: str = "Retrieves and analyzes security documentation, CVE databases, and technical references"
 
-    def __init__(self, **_kwargs: object) -> None:
-        """Initialize the documentation agent."""
-        super().__init__(**(_kwargs or {}))
-        self._retriever = None
-
-    @property
-    def retriever(self) -> object | None:
-        """Lazy load the retriever."""
-        if self._retriever is None:
-            try:
-                from agenticcybersense.rag.retriever import DocumentRetriever  # noqa: PLC0415
-
-                self._retriever = DocumentRetriever()
-            except ImportError as e:
-                self.logger.warning("Could not initialize retriever: %s", e)
-        return self._retriever
-
     async def _retrieve_context(self, query: str) -> str:
-        """Retrieve relevant documentation context."""
-        if self.retriever is None:
-            return "No documentation retriever available."
-        return self.retriever.retrieve_as_context(query)
+        """Retrieve relevant documentation context via RAG search."""
+        from agenticcybersense.rag.rag import rag_search  # noqa: PLC0415
+
+        return rag_search(query)
 
     async def _analyze_query(self, query: str) -> dict[str, Any]:
         """Analyze the query to extract key security terms."""
