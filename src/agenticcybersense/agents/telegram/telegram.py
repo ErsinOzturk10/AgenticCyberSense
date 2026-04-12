@@ -9,6 +9,7 @@ from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
 from agenticcybersense.agents.telegram.parser import normalize_message
+from agenticcybersense.agents.telegram.reporter import summarize_rows
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
@@ -46,11 +47,7 @@ class TelegramAgent(BaseAgent):
         limit: int = 10,
         client: TelegramClientWrapper | None = None,
     ) -> dict[str, Any]:
-        """Fetch messages from a Telegram channel.
-
-        - If a client is provided, real messages are fetched via Telethon.
-        - If client is None or the real fetch fails, falls back to simulated messages.
-        """
+        """Fetch messages from a Telegram channel."""
         self.logger.info("Checking channel: %s", channel["name"])
 
         normalized_messages: list[dict[str, Any]] = []
@@ -64,7 +61,7 @@ class TelegramAgent(BaseAgent):
                 keywords = [s.strip() for s in (settings.telegram_keywords or "").split(",") if s.strip()]
 
                 for m in msgs:
-                    normalized_messages.extend(normalize_message(m, channel_username=channel["id"], keywords=keywords) for m in msgs)
+                    normalized_messages.append(normalize_message(m, channel_username=channel["id"], keywords=keywords))
         except Exception as e:  # noqa: BLE001
             self.logger.warning(
                 "Real Telegram fetch failed for %s: %s; falling back to simulated data",
@@ -123,7 +120,6 @@ class TelegramAgent(BaseAgent):
                         "date": datetime.now(UTC).isoformat(),
                     },
                 ],
-                # for extra/unknown types, fall back to threat_intel
                 "malware_intel": [
                     {
                         "id": 1,
@@ -142,7 +138,6 @@ class TelegramAgent(BaseAgent):
                     "date": m.get("date_utc"),
                     "matched_keywords": m.get("matched_keywords", []),
                     "message_url": m.get("message_url"),
-                    "raw": m.get("raw"),
                 }
                 for m in normalized_messages
             ]
@@ -213,7 +208,6 @@ class TelegramAgent(BaseAgent):
         tg_api_id = settings.tg_api_id
         tg_api_hash = settings.tg_api_hash
 
-        # Fetch all channels sequentially with a single Telethon client (database is locked fix)
         if tg_api_id and tg_api_hash:
             async with TelegramClientWrapper(
                 api_id=tg_api_id,
@@ -222,17 +216,34 @@ class TelegramAgent(BaseAgent):
             ) as tg_client:
                 for channel in self.target_groups:
                     try:
-                        results.append(await self._fetch_channel_messages(channel, client=tg_client))
+                        results.append(await self._fetch_channel_messages(channel, limit=3, client=tg_client))
                     except (RuntimeError, ImportError) as e:
                         self.logger.warning("Error fetching %s: %s", channel["name"], e)
         else:
             for channel in self.target_groups:
                 try:
-                    results.append(await self._fetch_channel_messages(channel, client=None))
+                    results.append(await self._fetch_channel_messages(channel, limit=3, client=None))
                 except (RuntimeError, ImportError) as e:
                     self.logger.warning("Error fetching %s: %s", channel["name"], e)
 
         findings = await self._analyze_messages(request.query, results)
+
+        all_messages = []
+        for result in results:
+            if not result.get("used_simulated"):
+                for msg in result["messages"]:
+                    all_messages.append({
+                        "id": msg.get("id"),
+                        "text": msg.get("text", ""),
+                        "date": msg.get("date"),
+                        "matched_keywords": msg.get("matched_keywords", []),
+                        "message_url": msg.get("message_url"),
+                        "channel": result["channel"]["name"],
+                    })
+
+        llm_report = {}
+        if all_messages:
+            llm_report = summarize_rows(all_messages[:5])
 
         severity_order = {
             Severity.CRITICAL: 0,
@@ -258,6 +269,16 @@ class TelegramAgent(BaseAgent):
             response_parts.append(f"- **{channel['name']}** ({channel['id']}): {msg_count} messages\n")
 
         response_parts.append("\n**Recent Intelligence:**\n")
+
+        if llm_report and llm_report.get("findings"):
+            response_parts.append("\n**🤖 LLM Analysis:**\n")
+            for f in llm_report["findings"]:
+                severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.get("severity", ""), "⚪")
+                response_parts.append(f"{severity_emoji} **{f.get('title', 'N/A')}**\n")
+                response_parts.append(f"   - **Why it matters:** {f.get('why_it_matters', 'N/A')}\n")
+                response_parts.append(f"   - **CVE:** {f.get('cve') or 'N/A'}\n")
+                response_parts.append(f"   - **Exploit Status:** {f.get('exploit_status', 'unknown')}\n\n")
+
         if findings:
             for finding in findings[:5]:
                 emoji = {
