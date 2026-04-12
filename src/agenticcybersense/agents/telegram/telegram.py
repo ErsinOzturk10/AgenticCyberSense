@@ -61,7 +61,7 @@ class TelegramAgent(BaseAgent):
                 keywords = [s.strip() for s in (settings.telegram_keywords or "").split(",") if s.strip()]
 
                 for m in msgs:
-                    normalized_messages.append(normalize_message(m, channel_username=channel["id"], keywords=keywords))
+                    normalized_messages.extend(normalize_message(m, channel_username=channel["id"], keywords=keywords) for m in msgs)
         except Exception as e:  # noqa: BLE001
             self.logger.warning(
                 "Real Telegram fetch failed for %s: %s; falling back to simulated data",
@@ -199,7 +199,7 @@ class TelegramAgent(BaseAgent):
 
         return findings
 
-    async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901
+    async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901, PLR0915
         """Process a Telegram intelligence query."""
         self.logger.info("Telegram agent processing: %s", request.query[:100])
 
@@ -232,14 +232,17 @@ class TelegramAgent(BaseAgent):
         for result in results:
             if not result.get("used_simulated"):
                 for msg in result["messages"]:
-                    all_messages.append({
-                        "id": msg.get("id"),
-                        "text": msg.get("text", ""),
-                        "date": msg.get("date"),
-                        "matched_keywords": msg.get("matched_keywords", []),
-                        "message_url": msg.get("message_url"),
-                        "channel": result["channel"]["name"],
-                    })
+                    all_messages.extend(
+                        {
+                            "id": msg.get("id"),
+                            "text": msg.get("text", ""),
+                            "date": msg.get("date"),
+                            "matched_keywords": msg.get("matched_keywords", []),
+                            "message_url": msg.get("message_url"),
+                            "channel": result["channel"]["name"],
+                        }
+                        for msg in result["messages"]
+                    )
 
         llm_report = {}
         if all_messages:
