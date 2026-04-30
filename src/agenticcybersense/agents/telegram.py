@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 
 @register_agent
@@ -26,9 +29,9 @@ class TelegramAgent(BaseAgent):
         {"name": "Data Breach Monitor", "id": "@breach_monitor_example", "type": "breach"},
     ]
 
-    def __init__(self, target_groups: list[dict[str, str]] | None = None, **_kwargs: object) -> None:
+    def __init__(self, target_groups: list[dict[str, str]] | None = None, llm: BaseChatModel | None = None) -> None:
         """Initialize the Telegram agent."""
-        super().__init__(**(_kwargs or {}))
+        super().__init__(llm=llm)
         self.target_groups = target_groups or self.DEFAULT_CHANNELS
 
     async def _fetch_channel_messages(self, channel: dict[str, str], limit: int = 10) -> dict[str, Any]:
@@ -67,7 +70,7 @@ class TelegramAgent(BaseAgent):
 
     async def _analyze_messages(self, query: str, results: list[dict[str, Any]]) -> list[Finding]:
         """Analyze messages for relevant threat intelligence."""
-        findings = []
+        findings: list[Finding] = []
         query_lower = query.lower()
 
         # Keywords for severity classification
@@ -120,7 +123,7 @@ class TelegramAgent(BaseAgent):
         self.logger.info("Telegram agent processing: %s", request.query[:100])
 
         # Fetch from all configured channels
-        results = []
+        results: list[dict[str, Any]] = []
         for channel in self.target_groups:
             try:
                 result = await self._fetch_channel_messages(channel)

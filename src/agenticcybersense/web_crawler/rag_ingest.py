@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 import chromadb
 from sentence_transformers import SentenceTransformer
@@ -17,7 +17,7 @@ try:
 
     CHROMA_DIR = str(settings.chroma_persist_dir)
     EMBED_MODEL_NAME = getattr(settings, "embedding_model", "all-mpnet-base-v2")
-except Exception as exc:
+except (ImportError, OSError, RuntimeError) as exc:
     logger.warning("Settings import failed, using defaults: %s", exc)
     CHROMA_DIR = "./data/chroma_db"
     EMBED_MODEL_NAME = "all-mpnet-base-v2"
@@ -27,9 +27,26 @@ DEFAULT_JSON_PATH = str(_WEBCRAWLER_DIR / "output" / "latest_results.json")
 
 COLLECTION_NAME = "webcrawler_pages"
 CHUNK_SIZE = 1000
+MIN_CONTENT_LENGTH = 50
 
 _embed_model: SentenceTransformer | None = None
-_collection = None
+_collection: ChromaCollection | None = None
+
+
+class ChromaCollection(Protocol):
+    """Small protocol for the Chroma collection methods used here."""
+
+    def count(self) -> int:
+        """Return the number of documents in the collection."""
+        ...
+
+    def upsert(self, **kwargs: object) -> None:
+        """Insert or update documents in the collection."""
+        ...
+
+    def query(self, **kwargs: object) -> dict[str, Any]:
+        """Query the collection and return raw Chroma results."""
+        ...
 
 
 def _get_embed_model() -> SentenceTransformer:
@@ -40,29 +57,35 @@ def _get_embed_model() -> SentenceTransformer:
     return _embed_model
 
 
-def _get_collection():
+def _get_collection() -> ChromaCollection:
     global _collection  # noqa: PLW0603
     if _collection is None:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        _collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
+        _collection = cast(
+            "ChromaCollection",
+            client.get_or_create_collection(
+                name=COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine"},
+            ),
         )
         logger.info("ChromaDB collection '%s' ready at %s (docs: %d)", COLLECTION_NAME, CHROMA_DIR, _collection.count())
     return _collection
 
 
 def chunk_text(text: str, size: int = CHUNK_SIZE) -> list[str]:
+    """Split text into fixed-size chunks."""
     return [text[i : i + size] for i in range(0, len(text), size)]
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
+    """Embed text chunks with the configured sentence transformer."""
     model = _get_embed_model()
     return [model.encode(t).tolist() for t in texts]
 
 
-def upsert_site(url: str, page_idx: int, title: str, content: str, metadata: dict) -> int:
-    if not content or len(content.strip()) < 50:
+def upsert_site(url: str, page_idx: int, title: str, content: str, metadata: dict[str, Any]) -> int:
+    """Chunk, embed, and upsert a crawled site page."""
+    if not content or len(content.strip()) < MIN_CONTENT_LENGTH:
         return 0
     chunks = chunk_text(content)
     embeddings = embed_texts(chunks)
@@ -83,8 +106,9 @@ def upsert_site(url: str, page_idx: int, title: str, content: str, metadata: dic
 
 
 def ingest_crawler_json(json_path: str | None = None) -> dict[str, int]:
-    """Crawler output JSON'ını okuyup ChromaDB'ye yükler.
-    json_path verilmezse web_crawler/output/latest_results.json kullanılır.
+    """Load crawler output JSON into ChromaDB.
+
+    If json_path is omitted, web_crawler/output/latest_results.json is used.
     """
     path = Path(json_path) if json_path else Path(DEFAULT_JSON_PATH)
     if not path.exists():
@@ -93,7 +117,7 @@ def ingest_crawler_json(json_path: str | None = None) -> dict[str, int]:
 
     logger.info("Reading crawler JSON: %s (%.1f MB)", path, path.stat().st_size / 1_000_000)
     with path.open(encoding="utf-8") as f:
-        data: dict[str, Any] = json.load(f)
+        data = cast("dict[str, Any]", json.load(f))
 
     total_sites = total_pages = total_chunks = 0
     for site_url, site_data in data.items():
@@ -138,15 +162,15 @@ def query_webcrawler_rag(query: str, n_results: int = 5) -> list[dict[str, Any]]
             n_results=min(n_results, collection.count()),
             include=["documents", "metadatas", "distances"],
         )
-    except Exception as exc:
-        logger.exception("ChromaDB query failed: %s", exc)
+    except Exception:
+        logger.exception("ChromaDB query failed")
         return []
 
-    output = []
+    output: list[dict[str, Any]] = []
     docs = results.get("documents", [[]])[0]
     metas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
-    for doc, meta, dist in zip(docs, metas, distances):
+    for doc, meta, dist in zip(docs, metas, distances, strict=False):
         output.append(
             {
                 "content": doc,

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self, cast
 
 from agenticcybersense.logging_utils import get_logger
 
 if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
     from agenticcybersense.agents.base import BaseAgent
 
 logger = get_logger("agents.registry")
@@ -15,15 +17,15 @@ logger = get_logger("agents.registry")
 class AgentRegistry:
     """Registry for managing available agents."""
 
-    _instance: ClassVar[AgentRegistry] | None = None
-    _agents: ClassVar[dict[str, type[BaseAgent]]]
+    _instance: ClassVar[AgentRegistry | None] = None
+    _agents: ClassVar[dict[str, type[BaseAgent]]] = {}
 
     def __new__(cls) -> Self:
         """Create or return the singleton registry."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._agents = {}  # set class var to avoid private-member access
-        return cls._instance
+        return cast("Self", cls._instance)
 
     def register(self, agent_class: type[BaseAgent]) -> type[BaseAgent]:
         """Register an agent class.
@@ -44,13 +46,13 @@ class AgentRegistry:
         """Get an agent class by name."""
         return self._agents.get(name)
 
-    def create(self, name: str, **kwargs: object) -> BaseAgent | None:
+    def create(self, name: str, llm: BaseChatModel | None = None, **kwargs: Any) -> BaseAgent | None:  # noqa: ANN401
         """Create an agent instance by name."""
         agent_class = self.get(name)
         if agent_class is None:
             logger.warning("Agent not found: %s", name)
             return None
-        return agent_class(**kwargs)
+        return agent_class(llm=llm, **kwargs)
 
     def list_agents(self) -> list[str]:
         """List all registered agent names."""

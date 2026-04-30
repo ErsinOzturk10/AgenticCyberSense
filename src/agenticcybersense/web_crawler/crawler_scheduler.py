@@ -15,14 +15,15 @@ Yield:
     await stop_scheduler()
 
 """
+# ruff: noqa: FBT001, FBT002, RUF006, TRY401
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
+from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

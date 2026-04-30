@@ -15,7 +15,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-import requests
+import requests  # type: ignore[import-untyped]
 
 from agenticcybersense.settings import settings
 
@@ -114,7 +114,10 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
             time.sleep(sleep)
 
     # All attempts failed
-    raise last_err  # type: ignore[misc]
+    if last_err is not None:
+        raise last_err
+    msg = "Ollama call failed without an exception"
+    raise RuntimeError(msg)
 
 
 def _all_text_blob(rows: list[dict[str, Any]]) -> str:

@@ -6,7 +6,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -21,7 +21,7 @@ from agenticcybersense.settings import settings
 logger = get_logger("api_server")
 
 # Global graph instance
-_graph = None
+_graph: Any | None = None
 
 # Scheduler defaults
 SCHED_HOUR = 2
@@ -127,11 +127,13 @@ async def process_with_agents(query: str, conversation_id: str, context: dict[st
         }
 
         logger.info("Processing query: %s", query[:100])
-        result = await _graph.ainvoke(initial_state)
+        result = cast("dict[str, Any]", await _graph.ainvoke(initial_state))
 
-        final_response = result.get("final_response", "Processing complete.")
-        agents = result.get("agents_consulted", [])
-        findings_count = len(result.get("findings", []))
+        final_response = str(result.get("final_response", "Processing complete."))
+        agents_raw = result.get("agents_consulted", [])
+        agents = [str(agent) for agent in agents_raw] if isinstance(agents_raw, list) else []
+        findings_raw = result.get("findings", [])
+        findings_count = len(findings_raw) if isinstance(findings_raw, list) else 0
 
         if agents:
             final_response += f"\n\n---\n*Agents: {', '.join(agents)} | Findings: {findings_count}*"

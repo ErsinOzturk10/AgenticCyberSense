@@ -66,14 +66,14 @@ class WebAgent(BaseAgent):
         seen_urls: set[str] = set()
 
         for item in rag_results:
-            url = item.get("url") or item.get("site_url", "")
+            url = str(item.get("url") or item.get("site_url", ""))
             if url in seen_urls:
                 continue
             seen_urls.add(url)
 
-            score = item.get("score", 0.0)
-            title = item.get("title") or url
-            preview = item.get("content", "")[:200]
+            score = float(item.get("score", 0.0) or 0.0)
+            title = str(item.get("title") or url)
+            preview = str(item.get("content", ""))[:200]
 
             findings.append(
                 Finding(
@@ -83,7 +83,7 @@ class WebAgent(BaseAgent):
                     source=SourceRef(
                         source_type=SourceType.WEBSITE,
                         url=url,
-                        name=item.get("site_url", url)[:80],
+                        name=str(item.get("site_url", url))[:80],
                     ),
                     tags=["web", "osint", "crawler"],
                     raw_data={
@@ -124,11 +124,11 @@ class WebAgent(BaseAgent):
         ]
 
         for i, item in enumerate(rag_results[:5], 1):
-            score = item.get("score", 0)
-            url = item.get("url") or item.get("site_url", "N/A")
-            title = item.get("title") or url
-            content = item.get("content", "")[:300].replace("\n", " ")
-            last_updated = item.get("last_updated", "")[:10] or "unknown"
+            score = float(item.get("score", 0.0) or 0.0)
+            url = str(item.get("url") or item.get("site_url", "N/A"))
+            title = str(item.get("title") or url)
+            content = str(item.get("content", ""))[:300].replace("\n", " ")
+            last_updated = str(item.get("last_updated", ""))[:10] or "unknown"
 
             lines += [
                 f"\n**[{i}] {title}**\n",

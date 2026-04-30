@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import get_registry, register_agent
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 
 @register_agent
@@ -16,9 +19,9 @@ class OrchestratorAgent(BaseAgent):
     name: str = "orchestrator"
     description: str = "Main coordinator that routes queries to specialized agents and synthesizes results"
 
-    def __init__(self, **_kwargs: object) -> None:
+    def __init__(self, llm: BaseChatModel | None = None) -> None:
         """Initialize the orchestrator."""
-        super().__init__(**(_kwargs or {}))
+        super().__init__(llm=llm)
         self._agent_instances: dict[str, BaseAgent] = {}
 
     def _get_agent(self, name: str) -> BaseAgent | None:

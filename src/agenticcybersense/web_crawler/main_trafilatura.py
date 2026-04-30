@@ -1,4 +1,5 @@
 """Main crawler entry point with concurrency and shared browser support."""
+# ruff: noqa: C901, PLR0913, PLR0915
 
 from __future__ import annotations
 
@@ -6,9 +7,11 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from json import JSONDecodeError
 from pathlib import Path
+from typing import Any, cast
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 
 from agenticcybersense.web_crawler.config import (
     BLACKLIST,
@@ -21,7 +24,7 @@ from agenticcybersense.web_crawler.config import (
 )
 from agenticcybersense.web_crawler.crawl_history_manager import CrawlHistoryManager
 from agenticcybersense.web_crawler.deep_crawler_trafilatura import SmartDeepCrawler
-from agenticcybersense.web_crawler.trafilatura_ollama_agent import SharedBrowser, TrafilaturaOllamaAgent
+from agenticcybersense.web_crawler.trafilatura_ollama_agent import ExtractionResult, SharedBrowser, TrafilaturaOllamaAgent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -35,36 +38,37 @@ def load_urls_from_excel(excel_path: str) -> list[str]:
     try:
         df = pd.read_excel(excel_path, header=None)
         urls = [str(url).strip() for url in df.iloc[:, 0].dropna() if str(url).startswith("http")]
+    except Exception:
+        logger.exception("Excel error")
+        return []
+    else:
         logger.info("%d URLs loaded", len(urls))
         return urls
-    except Exception as exc:
-        logger.exception("Excel error: %s", exc)
-        return []
 
 
-def save_results(results: dict, output_path: str, lock_obj=None) -> None:
+def save_results(results: dict[str, Any], output_path: str) -> None:
     """Write crawl results to a JSON file."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with Path(output_path).open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
 
 
-def load_existing_results(output_path: str) -> dict:
+def load_existing_results(output_path: str) -> dict[str, Any]:
     """Load previously saved crawl results if they exist."""
     if not Path(output_path).exists():
         return {}
     try:
         with Path(output_path).open(encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as exc:
+            return cast("dict[str, Any]", json.load(f))
+    except (OSError, JSONDecodeError) as exc:
         logger.debug("Failed to load existing results: %s", exc)
         return {}
 
 
 def print_statistics(
-    all_results: dict,
+    all_results: dict[str, Any],
     total_duration: int,
-    skipped_count: int,
+    _skipped_count: int,
     blacklisted_count: int,
     history_manager: CrawlHistoryManager | None = None,
 ) -> None:
@@ -106,7 +110,7 @@ def print_statistics(
     logger.info("%s", "=" * 80)
 
 
-async def _watchdog(crawler: SmartDeepCrawler, crawl_task: asyncio.Task, inactivity_timeout: int) -> None:
+async def _watchdog(crawler: SmartDeepCrawler, crawl_task: asyncio.Task[list[ExtractionResult]], inactivity_timeout: int) -> None:
     """Cancel the crawl task if the crawler is inactive for too long."""
     check_interval = 10
     while not crawl_task.done():
@@ -126,8 +130,8 @@ async def process_single_site(
     idx: int,
     total: int,
     shared_browser: SharedBrowser,
-    history: CrawlHistoryManager,
-    all_results: dict,
+    history: CrawlHistoryManager | None,
+    all_results: dict[str, Any],
     results_lock: asyncio.Lock,
     save_lock: asyncio.Lock,
     site_semaphore: asyncio.Semaphore,
@@ -184,28 +188,30 @@ async def process_single_site(
                 site_data = {
                     "total_pages": len(results),
                     "duration_seconds": duration,
-                    "last_updated": datetime.now().isoformat(),
+                    "last_updated": datetime.now(UTC).isoformat(),
                     "crawl_mode": crawl_mode,
                     "pages": [r.to_dict() for r in results],
                 }
                 if ENABLE_INCREMENTAL and history and results:
                     first = results[0]
                     if first.main_content:
+                        first_metadata = first.metadata or {}
+                        first_links = first.links or []
                         history.update_history(
                             url,
                             first.main_content,
                             len(results),
                             {
-                                "extraction_type": first.metadata.get("extraction_type"),
-                                "method": first.metadata.get("method"),
-                                "link_count": len(first.links),
+                                "extraction_type": first_metadata.get("extraction_type"),
+                                "method": first_metadata.get("method"),
+                                "link_count": len(first_links),
                                 "force_crawled": FORCE_FULL_CRAWL,
                             },
                         )
 
-                successful = sum(1 for r in results if r.metadata.get("status") == "success")
+                successful = len([r for r in results if (r.metadata or {}).get("status") == "success"])
                 total_chars = sum(len(r.main_content or "") for r in results)
-                total_links = sum(len(r.links) for r in results)
+                total_links = sum(len(r.links or []) for r in results)
 
                 logger.info("COMPLETED [%d/%d]", idx, total)
                 logger.info("   Pages    : %d", len(results))
@@ -329,10 +335,10 @@ async def main() -> None:
         logger.warning("\nFAILED SITES:")
         for err, sites in failed_sites.items():
             logger.warning("\n   %s (%d sites):", err, len(sites))
-            for site in sites[:3]:
+            for site in sites[:FAILED_PREVIEW_COUNT]:
                 logger.info("      - %s", site)
-            if len(sites) > 3:
-                logger.info("      ... and %d more", len(sites) - 3)
+            if len(sites) > FAILED_PREVIEW_COUNT:
+                logger.info("      ... and %d more", len(sites) - FAILED_PREVIEW_COUNT)
 
     successful_sites = len([v for v in all_results.values() if v.get("total_pages", 0) > 0])
     pct = successful_sites * 100 // len(urls) if urls else 0
@@ -352,8 +358,8 @@ async def main() -> None:
 
         rag_stats = ingest_crawler_json()
         logger.info("RAG index updated: %s", rag_stats)
-    except Exception as exc:
-        logger.exception("RAG ingest failed — crawler results are still saved to disk: %s", exc)
+    except Exception:
+        logger.exception("RAG ingest failed — crawler results are still saved to disk")
 
 
 if __name__ == "__main__":

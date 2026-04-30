@@ -1,4 +1,5 @@
 """Crawl history manager with SQLite storage and hash-based normalization."""
+# ruff: noqa: ANN204, BLE001, D102, D107, DTZ005, PTH123, RUF012, TC006
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,7 @@ class CrawlHistoryManager:
 
             try:
                 with open(src, encoding="utf-8") as f:
-                    old_data: dict = json.load(f)
+                    old_data = cast(dict[str, dict[str, Any]], json.load(f))
 
                 migrated = 0
                 with self._connect() as conn:
@@ -193,7 +195,7 @@ class CrawlHistoryManager:
         url: str,
         content: str,
         total_pages: int,
-        metadata: dict | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         content_hash = self.compute_hash(content)
         now = datetime.now().isoformat()
@@ -230,7 +232,7 @@ class CrawlHistoryManager:
                 (url, datetime.now().isoformat(), error),
             )
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         with self._connect() as conn:
             total = conn.execute("SELECT COUNT(*) FROM crawl_history").fetchone()[0]
             main_ok = conn.execute("SELECT COUNT(*) FROM crawl_history WHERE page_type='main' AND content_hash IS NOT NULL").fetchone()[0]
@@ -245,7 +247,7 @@ class CrawlHistoryManager:
             "success_rate": f"{(main_ok + sub_ok) / total * 100:.1f}%" if total > 0 else "0%",
         }
 
-    def get_cached_result(self, url: str) -> dict | None:
+    def get_cached_result(self, url: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM crawl_history WHERE url = ?",
@@ -254,7 +256,7 @@ class CrawlHistoryManager:
         return dict(row) if row else None
 
     @property
-    def history(self) -> dict:
+    def history(self) -> dict[str, dict[str, Any]]:
         """Backward-compatible access to stored main pages."""
         with self._connect() as conn:
             rows = conn.execute("SELECT url FROM crawl_history WHERE page_type='main'").fetchall()

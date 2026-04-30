@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-# web_crawler klasörünün kendi dizini — nereden çalıştırılırsa çalıştırılsın
+# Use the web_crawler directory regardless of the process working directory.
 _BASE_DIR = Path(__file__).parent
 
 # Blacklisted URLs that must not be crawled.
@@ -25,7 +25,7 @@ CONCURRENT_SITES = 3
 # Timeout for inactive crawls in seconds.
 INACTIVITY_TIMEOUT = 180
 
-# Output paths — her zaman web_crawler/output/ altında oluşur
+# Output paths are always created under web_crawler/output.
 OUTPUT_FILE = str(_BASE_DIR / "output" / "latest_results.json")
 HISTORY_FILE = str(_BASE_DIR / "output" / "crawl_history.db")
 

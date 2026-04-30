@@ -1,4 +1,5 @@
 """Trafilatura + Ollama extraction agent with SharedBrowser support."""
+# ruff: noqa: ANN204, B905, BLE001, C901, D101, D102, D105, D107, DTZ005, F841, I001, PIE790, PLC0415, PLR0913, PLR2004, RUF012, S311, TC006, TRY300, TRY401
 
 from __future__ import annotations
 
@@ -7,17 +8,17 @@ import json
 import logging
 import random
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
+from urllib.parse import urljoin, urlparse
 
+from bs4 import BeautifulSoup
 import httpx
 import trafilatura
-from playwright.async_api import Browser, BrowserContext, async_playwright
 from playwright._impl._errors import TargetClosedError
-from urllib.parse import urljoin, urlparse
-from bs4 import BeautifulSoup
-from collections import Counter
+from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class SharedBrowser:
     """A single Chromium instance reused across crawls."""
 
     def __init__(self, max_concurrent_pages: int = 5):
-        self._pw = None
+        self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._semaphore = asyncio.Semaphore(max_concurrent_pages)
         self._started = False
@@ -62,6 +63,9 @@ class SharedBrowser:
 
     async def new_context(self, user_agent: str) -> BrowserContext:
         """Create a new isolated browser context."""
+        if self._browser is None:
+            msg = "SharedBrowser is not started"
+            raise RuntimeError(msg)
         ctx = await self._browser.new_context(
             user_agent=user_agent,
             viewport={"width": 1920, "height": 1080},
@@ -346,7 +350,7 @@ class TrafilaturaOllamaAgent:
     def _fetch_static(self, url: str) -> tuple[str | None, str | None, list[str]]:
         try:
             ua = random.choice(self.USER_AGENTS)
-            downloaded = trafilatura.fetch_url(url, config={"USER_AGENT": ua})
+            downloaded = trafilatura.fetch_url(url)
             if not downloaded:
                 return None, None, []
             links = self._extract_links_from_html(downloaded, url)
@@ -396,7 +400,7 @@ class TrafilaturaOllamaAgent:
         logger.info("Extraction successful: %s chars, %s links", f"{len(content):,}", len(links))
         return result
 
-    async def _wait_for_content(self, page, url: str) -> None:
+    async def _wait_for_content(self, page: Page, url: str) -> None:
         url_lower = url.lower()
         selectors_map = {
             "alienvault.com": [".pulse-list", '[class*="pulse"]'],
@@ -420,9 +424,7 @@ class TrafilaturaOllamaAgent:
                 return
         await page.wait_for_timeout(3000)
 
-    async def _dismiss_cookie_banners(self, page) -> None:
-        from playwright._impl._errors import TargetClosedError
-
+    async def _dismiss_cookie_banners(self, page: Page) -> None:
         selectors = [
             'button:has-text("Accept")',
             'button:has-text("I agree")',
@@ -444,9 +446,7 @@ class TrafilaturaOllamaAgent:
                 logger.debug("Cookie banner handler failed: %s", exc)
                 continue
 
-    async def _extract_links_with_playwright(self, page, base_url: str) -> list[str]:
-        from urllib.parse import urljoin, urlparse
-
+    async def _extract_links_with_playwright(self, page: Page, base_url: str) -> list[str]:
         base_domain = urlparse(base_url).netloc
         links: list[str] = []
         try:
@@ -464,16 +464,15 @@ class TrafilaturaOllamaAgent:
         return links
 
     def _extract_links_from_html(self, html: str, base_url: str) -> list[str]:
-        from urllib.parse import urljoin, urlparse
-
-        from bs4 import BeautifulSoup
-
         base_domain = urlparse(base_url).netloc
         links: list[str] = []
         try:
             soup = BeautifulSoup(html, "html.parser")
             for anchor in soup.find_all("a", href=True):
-                abs_url = urljoin(base_url, anchor["href"])
+                href = anchor.get("href")
+                if not isinstance(href, str):
+                    continue
+                abs_url = urljoin(base_url, href)
                 if urlparse(abs_url).netloc == base_domain:
                     clean = abs_url.split("#")[0].split("?")[0]
                     if clean and clean != base_url and clean not in links:
@@ -554,7 +553,10 @@ class TrafilaturaOllamaAgent:
                         },
                     },
                 )
-            return resp.json().get("response", "") if resp.status_code == 200 else ""
+            if resp.status_code != 200:
+                return ""
+            data = cast(dict[str, Any], resp.json())
+            return str(data.get("response", ""))
         except Exception as exc:
             logger.exception("Ollama call failed: %s", exc)
             return ""
@@ -563,20 +565,20 @@ class TrafilaturaOllamaAgent:
         if not text:
             return {}
         try:
-            return json.loads(text)
+            return cast(dict[str, Any], json.loads(text))
         except Exception as exc:
             logger.debug("JSON load failed: %s", exc)
             pass
         if "```json" in text:
             try:
-                return json.loads(text.split("```json")[1].split("```")[0].strip())
+                return cast(dict[str, Any], json.loads(text.split("```json")[1].split("```")[0].strip()))
             except Exception as exc:
                 logger.debug("JSON fenced block parse failed: %s", exc)
                 pass
         try:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
-                return json.loads(match.group(0))
+                return cast(dict[str, Any], json.loads(match.group(0)))
         except Exception as exc:
             logger.debug("JSON regex parse failed: %s", exc)
             pass
@@ -587,7 +589,8 @@ class TrafilaturaOllamaAgent:
         for i, (url, ext_type) in enumerate(zip(urls, extraction_types), 1):
             logger.info("[%s/%s] %s...", i, len(urls), url[:80])
             result = await self.extract_from_url(url, ext_type)
-            status = "success" if result.metadata.get("status") == "success" else "failed"
+            metadata = result.metadata or {}
+            status = "success" if metadata.get("status") == "success" else "failed"
             logger.info("Result: %s chars, status=%s", len(result.main_content or ""), status)
             results.append(result)
             if i < len(urls):
