@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
-from agenticcybersense.agents.telegram.parser import normalize_message
+from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
 from agenticcybersense.agents.telegram.reporter import summarize_rows
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
@@ -30,14 +31,7 @@ class TelegramAgent(BaseAgent):
     ]
 
     def __init__(self, target_groups: list[dict[str, str]] | None = None, **_kwargs: object) -> None:
-        """Initialize the Telegram agent.
-
-        Args:
-            target_groups: A list of dictionaries containing target group configurations with string keys and values.
-                           Defaults to DEFAULT_CHANNELS if not provided.
-            **_kwargs: Additional keyword arguments to pass to the parent class initializer.
-
-        """
+        """Initialize the Telegram agent."""
         super().__init__(**(_kwargs or {}))
         self.target_groups = target_groups or self.DEFAULT_CHANNELS
 
@@ -60,8 +54,8 @@ class TelegramAgent(BaseAgent):
 
                 keywords = [s.strip() for s in (settings.telegram_keywords or "").split(",") if s.strip()]
 
-                for m in msgs:
-                    normalized_messages.extend(normalize_message(m, channel_username=channel["id"], keywords=keywords) for m in msgs)
+                # PERF401: Use list.extend with a list comprehension
+                normalized_messages.extend([normalize_message(m, channel_username=channel["id"], keywords=keywords) for m in msgs])
         except Exception as e:  # noqa: BLE001
             self.logger.warning(
                 "Real Telegram fetch failed for %s: %s; falling back to simulated data",
@@ -153,7 +147,8 @@ class TelegramAgent(BaseAgent):
     async def _analyze_messages(self, query: str, results: list[dict[str, Any]]) -> list[Finding]:
         """Analyze messages for relevant threat intelligence."""
         findings: list[Finding] = []
-        query_lower = query.lower()
+        query_lower = (query or "").lower().strip()
+        is_cve_query = query_lower.startswith("cve-")
 
         critical_keywords = ["critical", "rce", "zero-day", "0day", "actively exploited", "breach"]
         high_keywords = ["high", "vulnerability", "exploit", "apt", "ransomware"]
@@ -164,14 +159,20 @@ class TelegramAgent(BaseAgent):
             messages = result["messages"]
 
             for msg in messages:
-                msg_text = msg.get("text", "").lower()
+                msg_text_raw = msg.get("text", "") or ""
+                msg_text = msg_text_raw.lower()
 
-                is_relevant = any(word in msg_text for word in query_lower.split()) or channel.get("type") in [
-                    "breach",
-                    "threat_intel",
-                ]
-                if not is_relevant:
-                    continue
+                # CHANGE: For CVE queries, require an actual CVE ID in the message text.
+                if is_cve_query:
+                    if not CVE_RE.search(msg_text_raw):
+                        continue
+                else:
+                    is_relevant = any(word in msg_text for word in query_lower.split()) or channel.get("type") in [
+                        "breach",
+                        "threat_intel",
+                    ]
+                    if not is_relevant:
+                        continue
 
                 if any(kw in msg_text for kw in critical_keywords):
                     severity = Severity.CRITICAL
@@ -185,7 +186,7 @@ class TelegramAgent(BaseAgent):
                 findings.append(
                     Finding(
                         title=f"Telegram: {channel['name']}",
-                        description=msg.get("text", "")[:200],
+                        description=msg_text_raw[:200],
                         severity=severity,
                         source=SourceRef(
                             source_type=SourceType.TELEGRAM,
@@ -199,9 +200,37 @@ class TelegramAgent(BaseAgent):
 
         return findings
 
+    def _message_matches_query(self, query: str, text: str) -> bool:
+        """Hard filter messages by the user query.
+
+        This prevents unrelated summaries when the last N messages don't contain the query.
+        """
+        q = (query or "").strip()
+        if not q:
+            return True
+
+        t = text or ""
+        tl = t.lower()
+        ql = q.lower()
+
+        # CVE queries: match specific year if provided, else any CVE pattern.
+        if ql.startswith("cve-"):
+            m = re.match(r"^cve-(\d{4})", ql)
+            if m:
+                year = m.group(1)
+                return re.search(rf"\bCVE-{year}-\d+\b", t, flags=re.IGNORECASE) is not None
+            return CVE_RE.search(t) is not None
+
+        # 0day queries
+        if ql in {"0day", "zero day", "zero-day"}:
+            return re.search(r"\b(?:0day|zero[\s-]?day)\b", tl) is not None
+
+        # General substring match
+        return ql in tl
+
     async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901, PLR0915
         """Process a Telegram intelligence query."""
-        self.logger.info("Telegram agent processing: %s", request.query[:100])
+        self.logger.info("Telegram agent processing: %s", (request.query or "")[:100])
 
         results: list[dict[str, Any]] = []
 
@@ -228,25 +257,32 @@ class TelegramAgent(BaseAgent):
 
         findings = await self._analyze_messages(request.query, results)
 
-        all_messages = []
-        for result in results:
-            if not result.get("used_simulated"):
-                for msg in result["messages"]:
-                    all_messages.extend(
-                        {
-                            "id": msg.get("id"),
-                            "text": msg.get("text", ""),
-                            "date": msg.get("date"),
-                            "matched_keywords": msg.get("matched_keywords", []),
-                            "message_url": msg.get("message_url"),
-                            "channel": result["channel"]["name"],
-                        }
-                        for msg in result["messages"]
-                    )
+        # FIX: build all_messages without duplication
+        all_messages: list[dict[str, Any]] = []
+        all_messages.extend(
+            {
+                "id": msg.get("id"),
+                "text": msg.get("text", ""),
+                "date": msg.get("date"),
+                "matched_keywords": msg.get("matched_keywords", []),
+                "message_url": msg.get("message_url"),
+                "channel": result["channel"]["name"],
+            }
+            for result in results
+            if not result.get("used_simulated")
+            for msg in result.get("messages", [])
+        )
 
-        llm_report = {}
-        if all_messages:
-            llm_report = summarize_rows(all_messages[:5])
+        # Hard-filter the messages by query before LLM summary
+        matched_messages = [m for m in all_messages if self._message_matches_query(request.query, m.get("text", ""))]
+
+        # NEW: keep report consistent — if nothing matched, don't return findings either
+        if not matched_messages:
+            findings = []
+
+        llm_report: dict[str, Any] = {}
+        if matched_messages:
+            llm_report = summarize_rows(matched_messages[:10])
 
         severity_order = {
             Severity.CRITICAL: 0,
@@ -262,7 +298,8 @@ class TelegramAgent(BaseAgent):
             f"**Query:** {request.query}\n",
             f"**Channels Monitored:** {len(results)}\n",
             f"**Messages Analyzed:** {sum(len(r['messages']) for r in results)}\n",
-            f"**Relevant Findings:** {len(findings)}\n\n",
+            f"**Relevant Findings:** {len(findings)}\n",
+            f"**Query Matches (messages):** {len(matched_messages)}\n\n",
         ]
 
         response_parts.append("**Channel Summary:**\n")
@@ -273,28 +310,32 @@ class TelegramAgent(BaseAgent):
 
         response_parts.append("\n**Recent Intelligence:**\n")
 
-        if llm_report and llm_report.get("findings"):
-            response_parts.append("\n**🤖 LLM Analysis:**\n")
-            for f in llm_report["findings"]:
-                severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.get("severity", ""), "⚪")
-                response_parts.append(f"{severity_emoji} **{f.get('title', 'N/A')}**\n")
-                response_parts.append(f"   - **Why it matters:** {f.get('why_it_matters', 'N/A')}\n")
-                response_parts.append(f"   - **CVE:** {f.get('cve') or 'N/A'}\n")
-                response_parts.append(f"   - **Exploit Status:** {f.get('exploit_status', 'unknown')}\n\n")
-
-        if findings:
-            for finding in findings[:5]:
-                emoji = {
-                    "critical": "🔴",
-                    "high": "🟠",
-                    "medium": "🟡",
-                    "low": "🟢",
-                    "info": "🔵",
-                }.get(finding.severity.value, "⚪")
-                response_parts.append(f"{emoji} **[{finding.severity.value.upper()}]** {finding.title}\n")
-                response_parts.append(f"   {finding.description[:100]}...\n\n")
+        # CHANGE: If nothing matched, don't print unrelated findings/LLM analysis.
+        if not matched_messages:
+            response_parts.append("No messages matched the query in the last fetch window.\n")
         else:
-            response_parts.append("No specific threats matching your query were found in monitored channels.\n")
+            if llm_report and llm_report.get("findings"):
+                response_parts.append("\n**🤖 LLM Analysis:**\n")
+                for f in llm_report["findings"]:
+                    severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.get("severity", ""), "⚪")
+                    response_parts.append(f"{severity_emoji} **{f.get('title', 'N/A')}**\n")
+                    response_parts.append(f"   - **Why it matters:** {f.get('why_it_matters', 'N/A')}\n")
+                    response_parts.append(f"   - **CVE:** {f.get('cve') or 'N/A'}\n")
+                    response_parts.append(f"   - **Exploit Status:** {f.get('exploit_status', 'unknown')}\n\n")
+
+            if findings:
+                for finding in findings[:5]:
+                    emoji = {
+                        "critical": "🔴",
+                        "high": "🟠",
+                        "medium": "🟡",
+                        "low": "🟢",
+                        "info": "🔵",
+                    }.get(finding.severity.value, "⚪")
+                    response_parts.append(f"{emoji} **[{finding.severity.value.upper()}]** {finding.title}\n")
+                    response_parts.append(f"   {finding.description[:100]}...\n\n")
+            else:
+                response_parts.append("No specific threats matching your query were found in monitored channels.\n")
 
         used_sim = any(r.get("used_simulated") for r in results)
         used_real = any((not r.get("used_simulated")) and len(r.get("messages", [])) > 0 for r in results)
@@ -320,5 +361,12 @@ class TelegramAgent(BaseAgent):
                 "messages_analyzed": sum(len(r["messages"]) for r in results),
                 "findings_count": len(findings),
                 "realtime_status": realtime_status,
+                "query_matches": len(matched_messages),
             },
         )
+        
+async def telegram_search(query: str) -> str:
+    """Search Telegram threat intelligence channels."""
+    agent = TelegramAgent()
+    response = await agent.process(AgentRequest(query=query))
+    return response.content

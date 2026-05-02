@@ -96,7 +96,7 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
 
     for i in range(1, attempts + 1):
         try:
-            resp = session.post(OLLAMA_URL, json=payload, timeout=(10, 900))
+            resp = session.post(OLLAMA_URL, json=payload, timeout=(10, 3600))
             resp.raise_for_status()
             obj = resp.json()
             text = obj.get("response") or ""
@@ -117,30 +117,71 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
     raise last_err  # type: ignore[misc]
 
 
+def _row_text(r: dict[str, Any]) -> str:
+    """Return the best-effort text content from a row.
+
+    Supports both schema variants:
+    - parser.normalize_message() rows: 'text_preview'
+    - TelegramAgent.process() rows: 'text'
+    """
+    return (r.get("text_preview") or r.get("text") or "").strip()
+
+
 def _all_text_blob(rows: list[dict[str, Any]]) -> str:
-    return "\n".join((r.get("text_preview") or "").strip() for r in rows)
+    return "\n".join(_row_text(r) for r in rows if _row_text(r))
 
 
 def extract_username_from_url(url: str) -> str | None:
-    """Extract a username from a Telegram URL.
-
-    Args:
-        url: A Telegram URL string to extract the username from.
-
-    Returns:
-        A string containing the username prefixed with '@' if found,
-        None if the URL is empty, is a t.me/c/... URL (which contains
-        numeric IDs instead of usernames), or no username is found.
-
-    """
+    """Extract a username from a Telegram URL."""
     if not url:
         return None
     if URL_TME_C_RE.search(url):
-        # t.me/c/... URLs don't contain a username; they contain numeric ids
         return None
     m = URL_USERNAME_RE.search(url)
     if m:
         return "@" + m.group(1)
+    return None
+
+
+def _extract_cves_from_text(text: str) -> list[str]:
+    """Extract unique CVEs from text, preserving first-seen order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in CVE_REGEX.finditer(text or ""):
+        c = m.group(0).upper()
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def _pick_cve_for_finding(
+    finding: dict[str, Any],
+    input_cves: list[str],
+    cves_in_input: set[str],
+) -> str | None:
+    """Best-effort deterministic CVE selection for a finding.
+
+    Priority:
+    1) Any CVE mentioned in evidence_quotes/title/details/why_it_matters.
+    2) If exactly one CVE exists in the input, use it.
+    3) Otherwise None (avoid wrong assignment).
+    """
+    parts: list[str] = []
+    parts.append(str(finding.get("title") or ""))
+    parts.append(str(finding.get("why_it_matters") or ""))
+    parts.append(str(finding.get("key_technical_details") or ""))
+    parts.extend([str(q or "") for q in finding.get("evidence_quotes") or []])
+
+    blob = "\n".join(parts)
+    cves_in_finding = _extract_cves_from_text(blob)
+    for c in cves_in_finding:
+        if c in cves_in_input:
+            return c
+
+    if len(input_cves) == 1:
+        return input_cves[0]
+
     return None
 
 
@@ -183,7 +224,9 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
     fb_url = first_url_from_rows()
 
     text_blob = _all_text_blob(fallback_rows)
-    cves_in_input = {m.group(0).upper() for m in CVE_REGEX.finditer(text_blob)}
+    input_cves = _extract_cves_from_text(text_blob)
+    cves_in_input = set(input_cves)
+
     blob_l = text_blob.lower()
     input_mentions_poc = any(x in blob_l for x in (" poc", "proof of concept", "p.o.c"))
     input_mentions_0day = any(x in blob_l for x in ("0day", "zero-day", "zero day"))
@@ -195,7 +238,12 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
             continue
 
         title = str(f.get("title") or "").strip() or "Untitled finding"
-        channels = [str(c).strip() for c in (f.get("channels") or []) if str(c).strip()]
+
+        channels_val = f.get("channels")
+        if isinstance(channels_val, str):
+            channels = [channels_val.strip()] if channels_val.strip() else []
+        else:
+            channels = [str(c).strip() for c in (channels_val or []) if str(c).strip()]
         if not channels:
             channels = fb_channels
 
@@ -213,6 +261,9 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
         if exploit_status == "exploited" and not input_mentions_exploited:
             exploit_status = "unknown"
 
+        why = str(f.get("why_it_matters") or "").strip()
+        details = str(f.get("key_technical_details") or "").strip()
+
         cve_val = f.get("cve")
         if cve_val is None:
             cve_out = None
@@ -224,38 +275,27 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
         if not source_urls and fb_url:
             source_urls = [fb_url]
 
-        normalized.append(
-            {
-                "title": title,
-                "channels": channels,
-                "severity": severity,
-                "why_it_matters": str(f.get("why_it_matters") or "").strip(),
-                "key_technical_details": str(
-                    f.get("key_technical_details") or "",
-                ).strip(),
-                "cve": cve_out,
-                "exploit_status": exploit_status,
-                "source_message_urls": source_urls,
-                "evidence_quotes": [str(q).strip() for q in (f.get("evidence_quotes") or []) if str(q).strip()],
-            },
-        )
+        evidence_quotes = [str(q).strip() for q in (f.get("evidence_quotes") or []) if str(q).strip()]
 
-    # Fill up to 5 with placeholders (before dedupe)
-    max_findings = 5
-    while len(normalized) < max_findings:
-        normalized.append(
-            {
-                "title": f"Finding {len(normalized) + 1}",
-                "channels": fb_channels,
-                "severity": "medium",
-                "why_it_matters": "",
-                "key_technical_details": "",
-                "cve": None,
-                "exploit_status": "unknown",
-                "source_message_urls": [fb_url] if fb_url else [],
-                "evidence_quotes": [],
-            },
-        )
+        item = {
+            "title": title,
+            "channels": channels,
+            "severity": severity,
+            "why_it_matters": why,
+            "key_technical_details": details,
+            "cve": cve_out,
+            "exploit_status": exploit_status,
+            "source_message_urls": source_urls,
+            "evidence_quotes": evidence_quotes,
+        }
+
+        # Deterministic CVE fill: if LLM didn't set it, try to infer safely.
+        if item["cve"] is None and cves_in_input:
+            picked = _pick_cve_for_finding(item, input_cves=input_cves, cves_in_input=cves_in_input)
+            if picked:
+                item["cve"] = picked
+
+        normalized.append(item)
 
     # Simple dedupe: merge by title or first URL
     merged: dict[str, dict[str, Any]] = {}
@@ -277,17 +317,17 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
                 if u and u not in e["source_message_urls"]:
                     e["source_message_urls"].append(u)
 
-            # severity: keep the higher severity
             sev_order = {"low": 0, "medium": 1, "high": 2}
-            if sev_order.get(item.get("severity", "medium"), 1) > sev_order.get(
-                e.get("severity", "medium"),
-                1,
-            ):
+            if sev_order.get(item.get("severity", "medium"), 1) > sev_order.get(e.get("severity", "medium"), 1):
                 e["severity"] = item["severity"]
+
+            # keep cve if one has it and the other doesn't
+            if not e.get("cve") and item.get("cve"):
+                e["cve"] = item["cve"]
 
     deduped = [merged[k] for k in order]
 
-    # If we can extract a username from the URL, normalize the channel to that username
+    # Normalize channel to username if URL contains it
     for d in deduped:
         uname = None
         for u in d.get("source_message_urls", []):
@@ -306,10 +346,62 @@ def sanitize_report(llm_text: str, fallback_rows: list[dict[str, Any]]) -> dict[
 def build_prompt_for_rows(rows: list[dict[str, Any]]) -> str:
     """Build LLM prompt from normalized rows."""
     return f"""
-You are a CTI analyst. You will be given Telegram messages that matched security keywords.
-Return ONLY valid JSON (no markdown, no commentary) with fields:
-generated_at_utc, findings[ title, channels, severity, why_it_matters, key_technical_details, cve, exploit_status, source_message_urls, evidence_quotes ].
-Input messages:
+You are a CTI analyst.
+
+TASK
+- You will be given Telegram messages (JSON array). Extract up to 5 actionable findings.
+
+OUTPUT RULES (STRICT)
+- Return ONLY a single JSON object. No markdown. No commentary. No code fences.
+- Must be valid JSON parseable by json.loads().
+- Do NOT include trailing commas.
+- If you cannot find any meaningful security finding, return:
+  {{"generated_at_utc":"<iso8601>","findings":[]}}
+
+FIELD RULES
+- findings is a list (0..5 items).
+- severity must be one of: "low" | "medium" | "high".
+- exploit_status must be one of: "unknown" | "poc" | "exploited" | "0day".
+- cve must be either null OR an EXACT CVE string found in the input text (e.g., "CVE-2022-29498").
+- If a CVE appears in the input, you MUST include it in cve for the relevant finding (do not set it to null).
+
+SCHEMA
+{{
+  "generated_at_utc": "YYYY-MM-DDTHH:MM:SSZ",
+  "findings": [
+    {{
+      "title": "string",
+      "channels": ["string"],
+      "severity": "low|medium|high",
+      "why_it_matters": "string",
+      "key_technical_details": "string",
+      "cve": "CVE-YYYY-NNNN..." or null,
+      "exploit_status": "unknown|poc|exploited|0day",
+      "source_message_urls": ["string"],
+      "evidence_quotes": ["string"]
+    }}
+  ]
+}}
+
+EXAMPLE (follow this structure exactly)
+{{
+  "generated_at_utc": "2026-04-24T00:00:00Z",
+  "findings": [
+    {{
+      "title": "Blazer SQL injection mentioned",
+      "channels": ["@CVE_Feed"],
+      "severity": "high",
+      "why_it_matters": "SQL injection can lead to data exposure or worse depending on context.",
+      "key_technical_details": "Blazer before 2.6.0 allows SQL Injection under certain circumstances.",
+      "cve": "CVE-2022-29498",
+      "exploit_status": "unknown",
+      "source_message_urls": [],
+      "evidence_quotes": ["CVE-2022-29498", "SQL Injection"]
+    }}
+  ]
+}}
+
+INPUT MESSAGES (JSON)
 {json.dumps(rows, ensure_ascii=False, indent=2)}
 """.strip()
 
@@ -323,6 +415,5 @@ def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     prompt = build_prompt_for_rows(rows)
-
     llm_text = call_ollama_with_retries(prompt)
     return sanitize_report(llm_text, rows)
