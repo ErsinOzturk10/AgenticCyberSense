@@ -11,6 +11,7 @@ AgenticCyberSense is an AI-powered cyber threat intelligence platform that uses 
 - [Architecture Overview](#architecture-overview)
 - [Agent System](#agent-system)
 - [Graph State Flow](#graph-state-flow)
+- [Web Crawler & RAG Pipeline](#web-crawler--rag-pipeline)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
@@ -28,7 +29,7 @@ AgenticCyberSense is an AI-powered cyber threat intelligence platform that uses 
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              API Server (FastAPI)                            │
-│                              Port: 7001                                      │
+│                              Port: 7002                                      │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
                                   ▼
@@ -113,17 +114,16 @@ AgenticCyberSense is an AI-powered cyber threat intelligence platform that uses 
 - **Sources**: PDF documents, security guides, CVE databases
 
 #### 🌐 Web Agent
-- **Role**: Web-based threat intelligence
-- **Sources**:
-  - NIST National Vulnerability Database (NVD)
-  - CISA Security Alerts
-  - Security news sites (Krebs, Hacker News, BleepingComputer)
-- **Capabilities**: CVE lookup, breach monitoring, security news
+- **Role**: Web-based threat intelligence via crawler RAG index
+- **Technology**: Semantic search over pre-crawled content
+- **Storage**: ChromaDB `webcrawler_pages` collection
+- **Sources**: 36 security sites including NIST NVD, CISA, Krebs on Security, BleepingComputer, SOCRadar, GitHub CTI repositories
+- **Updated**: Automatically after each crawler run (daily at 02:00)
 
 #### 📱 Telegram Agent
 - **Role**: Social media threat intelligence
 - **Sources**: Configured Telegram channels/groups
-- **Capabilities**: 
+- **Capabilities**:
   - Monitor for leaked credentials
   - Track threat actor communications
   - Detect data breach announcements
@@ -151,19 +151,12 @@ The system uses LangGraph for orchestration. Here's how the state flows through 
                                      │
                                      ▼
                             ┌─────────────────┐
-                            │  Documentation  │◄─────────────────┐
-                            │      Node       │                  │
-                            │                 │                  │
-                            │ • Retrieve docs │      ALWAYS      │
-                            │ • Build context │      FIRST       │
-                            └────────┬────────┘                  │
-                                     │                           │
-                         ┌───────────┴───────────┐               │
-                         │       Router          │───────────────┘
-                         │                       │
-                         │  if "documentation"   │
-                         │  not in consulted     │
-                         └───────────┬───────────┘
+                            │  Documentation  │
+                            │      Node       │
+                            │                 │
+                            │ • Retrieve docs │
+                            │ • Build context │
+                            └────────┬────────┘
                                      │
               ┌──────────────────────┼──────────────────────┐
               │                      │                      │
@@ -171,8 +164,8 @@ The system uses LangGraph for orchestration. Here's how the state flows through 
     ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
     │    Web Node     │    │  Telegram Node  │    │  (Future Nodes) │
     │                 │    │                 │    │                 │
-    │ • Check sources │    │ • Check channels│    │                 │
-    │ • Find threats  │    │ • Analyze msgs  │    │                 │
+    │ • Query ChromaDB│    │ • Check channels│    │                 │
+    │ • Semantic search    │ • Analyze msgs  │    │                 │
     └────────┬────────┘    └────────┬────────┘    └────────┬────────┘
              │                      │                      │
              └──────────────────────┼──────────────────────┘
@@ -194,30 +187,23 @@ The system uses LangGraph for orchestration. Here's how the state flows through 
 
 ### GraphState Object
 
-The `GraphState` dataclass holds all information as it flows through the graph:
-
 ```python
 @dataclass
 class GraphState:
-    # ═══════════════════════════════════════════════════════════
     # INPUT
-    # ═══════════════════════════════════════════════════════════
     query: str                    # User's question
     conversation_id: str          # Unique conversation identifier
     context: dict                 # Additional context from history
-    
-    # ═══════════════════════════════════════════════════════════
+
     # PROCESSING STATE
     current_agent: str            # Currently active agent
     agents_consulted: list[str]   # Agents that have responded
     pending_agents: list[str]     # Agents still to be consulted
-    
-    # ═══════════════════════════════════════════════════════════
+
     # AGENT RESPONSES
     agent_responses: dict         # {agent_name: AgentResponse}
-    documentation_context: str    # Special: always stored separately
-    
-    # ═══════════════════════════════════════════════════════════
+    documentation_context: str    # Always stored separately
+
     # RESULTS
     findings: list[Finding]       # All findings from all agents
     final_response: str           # Synthesized final report
@@ -225,113 +211,80 @@ class GraphState:
     error: str | None             # Error message if any
 ```
 
-### State Transitions
+---
+
+## 🕷️ Web Crawler & RAG Pipeline
+
+AgenticCyberSense includes a built-in web crawler that periodically collects threat intelligence from monitored security sites and indexes the content into ChromaDB for semantic search.
+
+### How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           STATE TRANSITIONS                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  INITIAL STATE                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ query: "What CVE vulnerabilities affect Apache?"                     │   │
-│  │ agents_consulted: []                                                 │   │
-│  │ pending_agents: []                                                   │   │
-│  │ findings: []                                                         │   │
-│  │ is_complete: false                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  AFTER ORCHESTRATOR                                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ query: "What CVE vulnerabilities affect Apache?"                     │   │
-│  │ agents_consulted: []                                                 │   │
-│  │ pending_agents: ["web", "telegram"]  ◄── Determined from keywords   │   │
-│  │ findings: []                                                         │   │
-│  │ is_complete: false                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  AFTER DOCUMENTATION                                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ query: "What CVE vulnerabilities affect Apache?"                     │   │
-│  │ agents_consulted: ["documentation"]  ◄── Added                       │   │
-│  │ pending_agents: ["web", "telegram"]                                  │   │
-│  │ documentation_context: "CVE info about Apache..."  ◄── Stored        │   │
-│  │ findings: [Finding(title="Doc Reference...")]  ◄── Added             │   │
-│  │ is_complete: false                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  AFTER WEB AGENT                                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ agents_consulted: ["documentation", "web"]  ◄── Added                │   │
-│  │ pending_agents: ["telegram"]  ◄── Removed "web"                      │   │
-│  │ findings: [Finding(...), Finding("Web Intel: NIST")]  ◄── Added      │   │
-│  │ is_complete: false                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  AFTER TELEGRAM AGENT                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ agents_consulted: ["documentation", "web", "telegram"]               │   │
-│  │ pending_agents: []  ◄── Empty, all agents consulted                  │   │
-│  │ findings: [Finding(...), Finding(...), Finding("Telegram...")]       │   │
-│  │ is_complete: false                                                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  FINAL STATE (After Synthesize)                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │ agents_consulted: ["documentation", "web", "telegram"]               │   │
-│  │ pending_agents: []                                                   │   │
-│  │ findings: [Finding(...), Finding(...), Finding(...)]                 │   │
-│  │ final_response: "# 🛡️ Cyber Threat Intelligence Report..."          │   │
-│  │ is_complete: true  ◄── Done!                                         │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+Scheduler (daily 02:00)
+        ↓
+main_trafilatura.py          — crawls configured security sites
+        ↓
+web_crawler/output/
+latest_results.json          — raw crawl output (~26MB)
+        ↓
+rag_ingest.py                — chunks text, embeds, upserts to ChromaDB
+        ↓
+data/chroma_db/
+webcrawler_pages collection  — persistent vector store (16,000+ chunks)
+        ↓
+Web Agent                    — semantic search on user query
 ```
 
-### Router Logic
+### Hash-Based Incremental Crawling
+
+The crawler uses SHA-256 content hashing to avoid re-crawling unchanged pages. On each run, only pages whose content has changed since the last crawl are re-fetched.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      ROUTER DECISION TREE                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│                         Router Called                            │
-│                              │                                   │
-│                              ▼                                   │
-│                    ┌─────────────────┐                          │
-│                    │  Has error?     │                          │
-│                    └────────┬────────┘                          │
-│                             │                                    │
-│              ┌──────────────┴──────────────┐                    │
-│              │ YES                         │ NO                  │
-│              ▼                             ▼                     │
-│     Return "synthesize"         ┌─────────────────┐             │
-│                                 │ "documentation"  │             │
-│                                 │ in consulted?    │             │
-│                                 └────────┬────────┘             │
-│                                          │                       │
-│                           ┌──────────────┴──────────────┐       │
-│                           │ NO                          │ YES    │
-│                           ▼                             ▼        │
-│                  Return "documentation"      ┌─────────────────┐│
-│                                              │ pending_agents  ││
-│                                              │ not empty?      ││
-│                                              └────────┬────────┘│
-│                                                       │         │
-│                                        ┌──────────────┴─────┐   │
-│                                        │ YES               │NO  │
-│                                        ▼                   ▼    │
-│                               Return next agent    Return       │
-│                               from pending         "synthesize" │
-│                               ("web"/"telegram")                │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+First run  : ~2-3 hours  (all sites crawled from scratch)
+Subsequent : ~20-30 min  (only changed pages re-crawled)
 ```
+
+Hash history is stored in `web_crawler/output/crawl_history.db` (SQLite).
+
+### Automatic Startup Behavior
+
+When the API server starts:
+
+| Condition | Behavior |
+|-----------|----------|
+| `latest_results.json` does not exist | Crawler starts immediately |
+| `latest_results.json` exists | Crawler waits for next scheduled run (02:00) |
+
+### Running the Crawler Manually
+
+```bash
+# Run a full crawl cycle (crawl + automatic RAG ingest)
+uv run python src/agenticcybersense/web_crawler/main_trafilatura.py
+
+# Run only the RAG ingest (if JSON already exists)
+uv run python src/agenticcybersense/web_crawler/rag_ingest.py
+
+# Check ChromaDB collection sizes
+uv run python -c "
+import chromadb
+client = chromadb.PersistentClient(path='./data/chroma_db')
+for col in client.list_collections():
+    print(col.name, '->', col.count(), 'chunks')
+"
+```
+
+### Crawler Configuration
+
+Edit `src/agenticcybersense/web_crawler/config.py`:
+
+```python
+CONCURRENT_SITES = 3       # parallel sites (increase for faster crawls)
+INACTIVITY_TIMEOUT = 180   # seconds before a site is skipped
+FORCE_FULL_CRAWL = False   # True = ignore hashes, re-crawl everything
+ENABLE_INCREMENTAL = True  # False = disable hash checks
+```
+
+Add or remove URLs in `src/agenticcybersense/web_crawler/config/sites.xlsx`.
 
 ---
 
@@ -340,8 +293,9 @@ class GraphState:
 ### Prerequisites
 
 - Python 3.12+
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- [uv](https://github.com/astral-sh/uv)
 - Ollama (for local LLM)
+- Playwright Chromium (for JS-heavy sites)
 
 ### Quick Start
 
@@ -353,15 +307,21 @@ cd AgenticCyberSense
 # Install dependencies
 uv sync
 
+# Install Playwright Chromium browser
+uv run playwright install chromium
+
 # Copy environment configuration
 cp .env.example .env
 
-# Start Ollama (in another terminal)
+# Start Ollama (in a separate terminal)
 ollama serve
 ollama pull llama3.2
 
-# Run the server
-uv run python -m agenticcybersense.api_server
+# Start the API server
+uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7002
+
+# Start the MCP server (optional, in a separate terminal)
+uv run uvicorn agenticcybersense.mcp.server:app --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -378,7 +338,7 @@ OLLAMA_MODEL=llama3.2
 
 # API Server
 API_HOST=0.0.0.0
-API_PORT=7001
+API_PORT=7002
 
 # RAG Settings
 CHROMA_PERSIST_DIR=./data/chroma_db
@@ -397,20 +357,31 @@ LOG_LEVEL=INFO
 
 1. Start the API server:
    ```bash
-   uv run python -m agenticcybersense.api_server
+   uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7002
    ```
 
-2. Configure OpenWebUI:
-   - **Base URL**: `http://localhost:7001/v1`
-   - **API Key**: `sk-dummy` (any value)
+2. Configure OpenWebUI — go to **Admin Panel → Settings → Connections → OpenAI API**:
+   - **URL**: `http://host.docker.internal:7002/v1` (if OpenWebUI runs in Docker)
+   - **Key**: `sk-any-value`
    - **Model**: `agenticcybersense`
 
 3. Start chatting!
 
+> **Note — Docker Networking**: If OpenWebUI runs in Docker, `localhost` inside the container refers to the container itself, not the host machine. Use `host.docker.internal` instead. On Windows with WSL, also add a port proxy rule:
+>
+> ```powershell
+> # Admin PowerShell
+> netsh interface portproxy add v4tov4 `
+>   listenport=7002 listenaddress=0.0.0.0 `
+>   connectport=7002 connectaddress=<WSL_IP>
+> ```
+>
+> Get your WSL IP: `ip addr show eth0 | grep "inet "`
+
 ### With cURL
 
 ```bash
-curl -X POST http://localhost:7001/v1/chat/completions \
+curl -X POST http://localhost:7002/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test" \
   -d '{
@@ -443,8 +414,8 @@ uv sync --all-groups
 # Run tests
 uv run pytest -s tests
 
-# Run linting
-uvx pre-commit run --all-files
+# Run linting and formatting
+uv run pre-commit run --all-files
 
 # Type checking
 uv run mypy src --strict
@@ -457,39 +428,47 @@ uv run mypy src --strict
 ```
 AgenticCyberSense/
 ├── src/agenticcybersense/
-│   ├── __init__.py
-│   ├── api_server.py          # FastAPI server
-│   ├── settings.py            # Configuration
-│   ├── logging_utils.py       # Logging
+│   ├── api_server.py              # FastAPI server + scheduler lifespan
+│   ├── settings.py                # Configuration
+│   ├── logging_utils.py           # Logging
 │   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── base.py            # BaseAgent ABC
-│   │   ├── registry.py        # Agent registry
-│   │   ├── orchestrator.py    # Orchestrator agent
-│   │   ├── documentation.py   # RAG agent
-│   │   ├── web.py             # Web intelligence
-│   │   └── telegram.py        # Telegram intelligence
+│   │   ├── base.py                # BaseAgent ABC
+│   │   ├── registry.py            # Agent registry
+│   │   ├── orchestrator.py        # Orchestrator agent
+│   │   ├── documentation.py       # RAG agent (PDF)
+│   │   ├── web.py                 # Web agent (crawler RAG)
+│   │   └── telegram.py            # Telegram agent
 │   ├── graph/
-│   │   ├── __init__.py
-│   │   ├── state.py           # GraphState definition
-│   │   ├── build_graph.py     # LangGraph construction
-│   │   └── routing.py         # Routing logic
+│   │   ├── state.py               # GraphState definition
+│   │   ├── build_graph.py         # LangGraph construction
+│   │   └── routing.py             # Routing logic
+│   ├── web_crawler/
+│   │   ├── config/
+│   │   │   └── sites.xlsx         # List of URLs to crawl
+│   │   ├── output/
+│   │   │   ├── latest_results.json  # Crawl output (~26MB)
+│   │   │   └── crawl_history.db     # Hash history (SQLite)
+│   │   ├── config.py              # Crawler settings
+│   │   ├── main_trafilatura.py    # Main crawl entry point
+│   │   ├── rag_ingest.py          # JSON → ChromaDB pipeline
+│   │   ├── crawler_scheduler.py   # APScheduler wrapper
+│   │   ├── crawl_history_manager.py
+│   │   ├── deep_crawler_trafilatura.py
+│   │   └── trafilatura_ollama_agent.py
 │   ├── rag/
-│   │   ├── __init__.py
-│   │   ├── ingest.py          # Document ingestion
-│   │   └── retriever.py       # Document retrieval
+│   │   ├── ingest.py              # PDF document ingestion
+│   │   └── retriever.py           # Document retrieval
 │   ├── schemas/
-│   │   ├── __init__.py
-│   │   ├── messages.py        # Request/Response schemas
-│   │   └── findings.py        # Finding/Severity schemas
+│   │   ├── messages.py            # Request/Response schemas
+│   │   └── findings.py            # Finding/Severity schemas
 │   └── llm/
-│       ├── __init__.py
-│       ├── factory.py         # LLM creation
-│       └── prompts.py         # Prompt templates
-├── tests/
+│       ├── factory.py             # LLM creation
+│       └── prompts.py             # Prompt templates
 ├── data/
-│   ├── documents/             # PDF documents for RAG
-│   └── chroma_db/             # Vector database
+│   ├── documents/                 # PDF documents for RAG
+│   └── chroma_db/
+│       ├── pdf_documents          # Documentation agent vector store
+│       └── webcrawler_pages       # Web agent vector store (16,000+ chunks)
 ├── .env
 ├── pyproject.toml
 └── README.md
