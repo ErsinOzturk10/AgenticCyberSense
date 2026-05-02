@@ -318,7 +318,7 @@ ollama serve
 ollama pull llama3.2
 
 # Start the API server
-uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7002
+uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7001
 
 # Start the MCP server (optional, in a separate terminal)
 uv run uvicorn agenticcybersense.mcp.server:app --host 0.0.0.0 --port 8000
