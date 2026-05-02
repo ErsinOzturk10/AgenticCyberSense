@@ -22,7 +22,7 @@ HTTP_TIMEOUT_SECONDS = 60 * 60
 SSE_READ_TIMEOUT_SECONDS = 60 * 60
 
 
-async def run_agent() -> None:
+async def run_agent() -> None:  # noqa: C901, PLR0915
     """Run an interactive session with the MCP agent."""
     logger.info(
         "Configured MCP timeouts: timeout=%ss, sse_read_timeout=%ss",
@@ -113,10 +113,7 @@ async def run_agent() -> None:
 
                 for message in response.get("messages", []):
                     for tool_call in getattr(message, "tool_calls", []) or []:
-                        if isinstance(tool_call, dict):
-                            tool_name = tool_call.get("name")
-                        else:
-                            tool_name = getattr(tool_call, "name", None)
+                        tool_name = tool_call.get("name") if isinstance(tool_call, dict) else getattr(tool_call, "name", None)
 
                         if tool_name and tool_name not in seen_tool_names:
                             tools_used.append(tool_name)
