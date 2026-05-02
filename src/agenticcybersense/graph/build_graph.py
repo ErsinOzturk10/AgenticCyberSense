@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
 from agenticcybersense.graph.state import GraphState
 from agenticcybersense.logging_utils import get_logger
+from agenticcybersense.schemas.findings import Finding  # noqa: TC001
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
-
-if TYPE_CHECKING:
-    from agenticcybersense.schemas.findings import Finding
 
 logger = get_logger("graph.build")
 

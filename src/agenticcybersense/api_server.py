@@ -65,7 +65,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from agenticcybersense.web_crawler.crawler_scheduler import start_scheduler  # noqa: PLC0415
 
-        await start_scheduler(hour=SCHED_HOUR, minute=SCHED_MINUTE, run_on_startup=False)
+        await start_scheduler(hour=SCHED_HOUR, minute=SCHED_MINUTE)
         logger.info("Crawler scheduler started")
     except Exception:
         logger.exception("Crawler scheduler could not be started")
