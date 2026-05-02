@@ -108,11 +108,28 @@ async def run_agent() -> None:
                 logger.info("\nAgent_response_as_a_dict: %s", response)
                 logger.info("\n" + "-" * 45)  # noqa: G003
 
-                # This can fail if no tool was used; keeping your original behavior.
-                logger.info(
-                    "Tools used in this response: %s",
-                    response["messages"][1].tool_calls[0]["name"],
-                )
+                tools_used = []
+                seen_tool_names = set()
+
+                for message in response.get("messages", []):
+                    for tool_call in getattr(message, "tool_calls", []) or []:
+                        if isinstance(tool_call, dict):
+                            tool_name = tool_call.get("name")
+                        else:
+                            tool_name = getattr(tool_call, "name", None)
+
+                        if tool_name and tool_name not in seen_tool_names:
+                            tools_used.append(tool_name)
+                            seen_tool_names.add(tool_name)
+
+                    if getattr(message, "type", None) == "tool":
+                        tool_name = getattr(message, "name", None)
+
+                        if tool_name and tool_name not in seen_tool_names:
+                            tools_used.append(tool_name)
+                            seen_tool_names.add(tool_name)
+
+                logger.info("Tools used in this response: %s", tools_used)
                 logger.info("\n" + "-" * 45)  # noqa: G003
 
                 chunks = response["messages"][2].artifact["structured_content"]["result"].split("---")
