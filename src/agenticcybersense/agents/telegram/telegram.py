@@ -364,7 +364,8 @@ class TelegramAgent(BaseAgent):
                 "query_matches": len(matched_messages),
             },
         )
-        
+
+
 async def telegram_search(query: str) -> str:
     """Search Telegram threat intelligence channels."""
     agent = TelegramAgent()

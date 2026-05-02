@@ -2,12 +2,14 @@
 
 from mcp.server.fastmcp import FastMCP
 
+from agenticcybersense.agents.telegram.telegram import telegram_search as _telegram_search
+
 # Assuming these modules exist in your project structure
 from agenticcybersense.rag.rag import rag_search as _rag_search
-from agenticcybersense.agents.telegram.telegram import telegram_search as _telegram_search
 
 # Initialize FastMCP server
 mcp = FastMCP("dummy-mcp-tools-server")
+
 
 @mcp.tool()
 def rag_search(user_input: str) -> str:
@@ -25,6 +27,7 @@ def rag_search(user_input: str) -> str:
     "Insufficient information in the provided documents."
     """
     return _rag_search(query=user_input)
+
 
 @mcp.tool()
 async def telegram_search(user_input: str) -> str:

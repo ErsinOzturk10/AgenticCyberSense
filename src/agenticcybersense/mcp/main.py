@@ -64,7 +64,7 @@ async def run_agent() -> None:
             "Do not produce the final answer until all necessary tool calls are completed.\n"
             "You have access to the following tools: rag_search, telegram_search.\n"
             "When using tools, you must provide ONLY the value required.\n"
-             "Rules for rag_search tool usage:\n"
+            "Rules for rag_search tool usage:\n"
             "- rag_search is mandatory as the first tool call for every user request.\n"
             "- Do NOT hallucinate. If you don't know, say you don't know.\n"
             "- When using rag_search, always cite the source.\n"
