@@ -16,6 +16,8 @@ venv
 
 # Dot
 .env
+*.session
+*.session-journal
 
 #debug
 .vscode
