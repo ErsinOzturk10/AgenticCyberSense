@@ -32,7 +32,7 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
     logger.info("MCP target URL: %s", getattr(settings, "mcp_target_url", None))
 
     server_config = {
-        "dummy-server": {
+        "agenticcybersense-mcp": {
             "transport": "sse",
             "url": settings.mcp_target_url,  # type: ignore[attr-defined]
             "timeout": float(HTTP_TIMEOUT_SECONDS),
