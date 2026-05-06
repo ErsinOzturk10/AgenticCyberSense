@@ -1,9 +1,20 @@
 """Webcrawler configuration."""
 
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Use the web_crawler directory regardless of the process working directory.
 _BASE_DIR = Path(__file__).parent
+
+# Path to the Excel file containing site configurations.
+SITES_FILE: str = os.getenv(
+    "CRAWLER_SITES_FILE",
+    str(_BASE_DIR / "config" / "sites.xlsx"),
+)
 
 # Blacklisted URLs that must not be crawled.
 BLACKLIST: list[str] = []
@@ -35,3 +46,7 @@ ENABLE_INCREMENTAL = True
 # True  = ignore hash checks and always crawl everything
 # False = skip unchanged sites
 FORCE_FULL_CRAWL = False
+
+# Scheduler
+SCHEDULE_HOUR: int = int(os.getenv("CRAWLER_SCHEDULE_HOUR", "0"))
+SCHEDULE_MINUTE: int = int(os.getenv("CRAWLER_SCHEDULE_MINUTE", "0"))

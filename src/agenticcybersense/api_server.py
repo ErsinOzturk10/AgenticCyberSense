@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agenticcybersense.logging_utils import get_logger, setup_logging
 from agenticcybersense.settings import settings
+from agenticcybersense.web_crawler.config import SCHEDULE_HOUR, SCHEDULE_MINUTE
 
 logger = get_logger("api_server")
 
@@ -24,8 +25,8 @@ logger = get_logger("api_server")
 _graph: Any | None = None
 
 # Scheduler defaults
-SCHED_HOUR = 2
-SCHED_MINUTE = 0
+SCHED_HOUR = SCHEDULE_HOUR
+SCHED_MINUTE = SCHEDULE_MINUTE
 
 # Streaming chunk size for SSE responses
 STREAM_CHUNK_SIZE = 20

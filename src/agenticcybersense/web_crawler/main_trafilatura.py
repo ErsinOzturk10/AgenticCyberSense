@@ -21,6 +21,7 @@ from agenticcybersense.web_crawler.config import (
     HISTORY_FILE,
     INACTIVITY_TIMEOUT,
     OUTPUT_FILE,
+    SITES_FILE,
 )
 from agenticcybersense.web_crawler.crawl_history_manager import CrawlHistoryManager
 from agenticcybersense.web_crawler.deep_crawler_trafilatura import SmartDeepCrawler
@@ -250,7 +251,7 @@ async def main() -> None:
     logger.info("   Concurrent sites : %d", CONCURRENT_SITES)
     logger.info("%s", "=" * 80)
 
-    excel_path = str(Path(__file__).parent / "config" / "sites.xlsx")
+    excel_path = SITES_FILE
     max_depth = 1
     ollama_model = "gemma3:12b"
 
