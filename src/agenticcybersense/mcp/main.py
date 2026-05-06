@@ -6,6 +6,7 @@ import warnings
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 from agenticcybersense.settings import settings
@@ -16,10 +17,57 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Agent model
-model_name = settings.ollama_model
 HTTP_TIMEOUT_SECONDS = 60 * 60
 SSE_READ_TIMEOUT_SECONDS = 60 * 60
+OPENAI_API_KEY_MISSING_ERROR = "OPENAI_API_KEY is required when using OpenAI. Set it in your .env file or environment variables."
+
+
+def choose_llm_provider() -> str:
+    """Ask the user which LLM provider to use for this session."""
+    default_provider = (settings.llm_provider or "ollama").lower().strip()
+    default_choice = "2" if default_provider == "openai" else "1"
+
+    prompt_text = (
+        "\nSelect LLM provider:\n"
+        f"1) Local Ollama - {settings.ollama_model}\n"
+        f"2) OpenAI - {settings.openai_model}\n"
+        f"\nPress Enter to use default [{default_choice}].\n"
+        "Choice [1/2]: "
+    )
+
+    while True:
+        choice = input(prompt_text).strip() or default_choice
+
+        if choice == "1":
+            return "ollama"
+        if choice == "2":
+            return "openai"
+
+        logger.warning("Invalid choice. Please enter 1 or 2.")
+
+
+def build_llm(provider: str) -> ChatOllama | ChatOpenAI:
+    """Build the selected LLM client."""
+    provider = provider.lower().strip()
+
+    if provider == "openai":
+        if not settings.openai_api_key:
+            raise RuntimeError(OPENAI_API_KEY_MISSING_ERROR)
+
+        logger.info("Using OpenAI model: %s", settings.openai_model)
+        return ChatOpenAI(
+            model=settings.openai_model,
+            api_key=settings.openai_api_key,
+            temperature=0,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            max_retries=2,
+        )
+
+    logger.info("Using Ollama model: %s", settings.ollama_model)
+    return ChatOllama(
+        model=settings.ollama_model,
+        temperature=0,
+    )
 
 
 async def run_agent() -> None:  # noqa: C901, PLR0915
@@ -30,6 +78,9 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
         SSE_READ_TIMEOUT_SECONDS,
     )
     logger.info("MCP target URL: %s", getattr(settings, "mcp_target_url", None))
+
+    selected_provider = choose_llm_provider()
+    llm = build_llm(selected_provider)
 
     server_config = {
         "agenticcybersense-mcp": {
@@ -46,15 +97,8 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
         # 1) Fetch tool definitions
         tools = await client.get_tools()
         logger.info("\nTools: %s", tools)
-        logger.info("Using Ollama model: %s", model_name)
 
-        # 2) LLM Setup
-        llm = ChatOllama(
-            model=model_name,
-            temperature=0,
-        )
-
-        # 3) System Prompt
+        # 2) System Prompt
         system_prompt = (
             "You are an intelligent assistant that can use tools when necessary.\n"
             "But rag_search is mandatory as the first tool call for every user request.\n"
@@ -68,10 +112,12 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
             "- rag_search is mandatory as the first tool call for every user request.\n"
             "- Do NOT hallucinate. If you don't know, say you don't know.\n"
             "- When using rag_search, always cite the source.\n"
-            "Use telegram_search for recent cyber threat chatter, CVEs, CTI, leaks, malware campaigns, APT activity or Telegram-sourced threat intel.\n"
+            "Use telegram_search for recent cyber threat chatter, CVEs, CTI, leaks, malware campaigns, "
+            "APT activity or Telegram-sourced threat intel.\n"
             "When tools return information, you must base your final answer on the relevant outputs from all tools used.\n"
             "Do not ignore any relevant tool output.\n"
-            "If a tool output is irrelevant, empty, insufficient, vague, or contradictory, explicitly account for that instead of guessing.\n"
+            "If a tool output is irrelevant, empty, insufficient, vague, or contradictory, explicitly account for that "
+            "instead of guessing.\n"
             "Do not ignore tool results or replace them with generic advice.\n\n"
             "Critical rules for telegram_search:\n"
             "- After rag_search, use telegram_search for all Telegram-related prompts.\n"
