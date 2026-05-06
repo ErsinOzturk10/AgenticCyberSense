@@ -10,7 +10,6 @@ from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
 from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
-from agenticcybersense.agents.telegram.reporter import summarize_rows
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
@@ -170,7 +169,7 @@ class TelegramAgent(BaseAgent):
         tl = t.lower()
         ql = q.lower()
 
-        # CVE queries: match specific year if provided, else any CVE pattern.
+        # Specific CVE queries: match specific year if provided, else any CVE pattern.
         if ql.startswith("cve-"):
             m = re.match(r"^cve-(\d{4})", ql)
             if m:
@@ -178,11 +177,49 @@ class TelegramAgent(BaseAgent):
                 return re.search(rf"\bCVE-{year}-\d+\b", t, flags=re.IGNORECASE) is not None
             return CVE_RE.search(t) is not None
 
-        # 0day queries
+        # General CVE / vulnerability queries.
+        if any(
+            term in ql
+            for term in [
+                "cve",
+                "cves",
+                "vulnerability",
+                "vulnerabilities",
+                "exploit",
+                "exploits",
+                "poc",
+                "proof of concept",
+                "weaponization",
+                "weaponized",
+            ]
+        ):
+            return CVE_RE.search(t) is not None or any(
+                term in tl
+                for term in [
+                    "cve",
+                    "vulnerability",
+                    "vulnerabilities",
+                    "cvss",
+                    "rce",
+                    "sql injection",
+                    "xss",
+                    "zero-day",
+                    "zero day",
+                    "0day",
+                    "exploit",
+                    "exploited",
+                    "poc",
+                    "proof of concept",
+                    "weaponized",
+                    "weaponization",
+                ]
+            )
+
+        # 0day queries.
         if ql in {"0day", "zero day", "zero-day"}:
             return re.search(r"\b(?:0day|zero[\s-]?day)\b", tl) is not None
 
-        # General substring match
+        # General substring match.
         return ql in tl
 
     async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901, PLR0915
@@ -202,7 +239,14 @@ class TelegramAgent(BaseAgent):
                     session_name=settings.tg_session_name,
                 ) as tg_client:
                     results.extend(
-                        [await self._fetch_channel_messages(channel, limit=3, client=tg_client) for channel in self.target_groups],
+                        [
+                            await self._fetch_channel_messages(
+                                channel,
+                                limit=10,
+                                client=tg_client,
+                            )
+                            for channel in self.target_groups
+                        ],
                     )
             except Exception as e:  # noqa: BLE001
                 self.logger.warning("Telegram client initialization failed: %s", e)
@@ -242,8 +286,6 @@ class TelegramAgent(BaseAgent):
             findings = []
 
         llm_report: dict[str, Any] = {}
-        if matched_messages:
-            llm_report = summarize_rows(matched_messages[:10])
 
         severity_order = {
             Severity.CRITICAL: 0,
