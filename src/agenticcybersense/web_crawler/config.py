@@ -27,6 +27,7 @@ def _read_int_env(name: str, default: int) -> int:
         msg = f"Invalid integer value for {name}: {raw_value!r}"
         raise ValueError(msg) from exc
 
+
 # Path to the Excel file containing site configurations.
 SITES_FILE: str = os.getenv(
     "CRAWLER_SITES_FILE",

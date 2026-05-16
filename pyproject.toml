@@ -63,5 +63,5 @@ line-length=160
 
 [tool.ruff.lint]
 extend-select = ["ALL",]
-ignore = ["D404", "S101"]
+ignore = ["COM812", "D203", "D213", "D404", "S101"]
 fixable = ["ALL",]
