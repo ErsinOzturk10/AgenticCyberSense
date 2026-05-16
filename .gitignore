@@ -5,6 +5,10 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.sessions/
 
 # Virtual environments
 .venv
@@ -12,6 +16,8 @@ venv
 
 # Dot
 .env
+*.session
+*.session-journal
 
 #debug
 .vscode

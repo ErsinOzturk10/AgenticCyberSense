@@ -6,6 +6,10 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 @dataclass
 class Settings:
@@ -14,7 +18,7 @@ class Settings:
     # LLM Settings
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "ollama"))
     ollama_base_url: str = field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
-    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.2"))
+    ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.1:8b"))
 
     # Cloud LLM (future use)
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
