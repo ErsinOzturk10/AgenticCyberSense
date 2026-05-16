@@ -2,21 +2,36 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Any, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
 from agenticcybersense.graph.state import GraphState
 from agenticcybersense.logging_utils import get_logger
-from agenticcybersense.schemas.messages import AgentRequest
-
-if TYPE_CHECKING:
-    from langgraph.graph.state import CompiledStateGraph
+from agenticcybersense.schemas.findings import Finding  # noqa: TC001
+from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 
 logger = get_logger("graph.build")
 
 
-def _from_dict(d: dict) -> GraphState:
+class GraphStateDict(TypedDict, total=False):
+    """Typed state shape passed through LangGraph."""
+
+    query: str
+    conversation_id: str
+    context: dict[str, Any]
+    current_agent: str
+    agents_consulted: list[str]
+    pending_agents: list[str]
+    agent_responses: dict[str, AgentResponse]
+    findings: list[Finding]
+    documentation_context: str
+    final_response: str
+    is_complete: bool
+    error: str | None
+
+
+def _from_dict(d: GraphStateDict) -> GraphState:
     """Convert dict to GraphState."""
     return GraphState(
         query=d.get("query", ""),
@@ -34,7 +49,7 @@ def _from_dict(d: dict) -> GraphState:
     )
 
 
-def _to_dict(state: GraphState) -> dict:
+def _to_dict(state: GraphState) -> GraphStateDict:
     """Convert GraphState to dict."""
     return {
         "query": state.query,
@@ -101,7 +116,7 @@ def _determine_pending_agents(query: str) -> list[str]:
     return agents
 
 
-async def orchestrator_node(state_dict: dict) -> dict:
+async def orchestrator_node(state_dict: GraphStateDict) -> GraphStateDict:
     """Entry point - sets up processing."""
     state = _from_dict(state_dict)
     logger.info("Orchestrator processing: %s", state.query[:100] if state.query else "empty query")
@@ -110,28 +125,28 @@ async def orchestrator_node(state_dict: dict) -> dict:
     return _to_dict(state)
 
 
-async def documentation_node(state_dict: dict) -> dict:
+async def documentation_node(state_dict: GraphStateDict) -> GraphStateDict:
     """Documentation agent node."""
     state = _from_dict(state_dict)
     state = await _process_agent(state, "documentation")
     return _to_dict(state)
 
 
-async def web_node(state_dict: dict) -> dict:
+async def web_node(state_dict: GraphStateDict) -> GraphStateDict:
     """Web agent node."""
     state = _from_dict(state_dict)
     state = await _process_agent(state, "web")
     return _to_dict(state)
 
 
-async def telegram_node(state_dict: dict) -> dict:
+async def telegram_node(state_dict: GraphStateDict) -> GraphStateDict:
     """Telegram agent node."""
     state = _from_dict(state_dict)
     state = await _process_agent(state, "telegram")
     return _to_dict(state)
 
 
-async def synthesize_node(state_dict: dict) -> dict:
+async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:
     """Synthesize all agent responses."""
     state = _from_dict(state_dict)
     logger.info("Synthesizing responses from %d agents", len(state.agents_consulted))
@@ -168,7 +183,7 @@ async def synthesize_node(state_dict: dict) -> dict:
     return _to_dict(state)
 
 
-def router(state_dict: dict) -> str:
+def router(state_dict: GraphStateDict) -> str:
     """Route to the next node."""
     state = _from_dict(state_dict)
 
@@ -191,7 +206,7 @@ def router(state_dict: dict) -> str:
     return "synthesize"
 
 
-def build_graph(**_kwargs: object) -> CompiledStateGraph:
+def build_graph(**_kwargs: object) -> Any:  # noqa: ANN401
     """Build and compile the orchestration graph."""
     logger.info("Building orchestration graph")
 
@@ -199,7 +214,7 @@ def build_graph(**_kwargs: object) -> CompiledStateGraph:
     from agenticcybersense import agents as _agents  # noqa: PLC0415, F401
 
     # Create graph
-    workflow = StateGraph(dict)
+    workflow: Any = StateGraph(GraphStateDict)
 
     # Add nodes
     workflow.add_node("orchestrator", orchestrator_node)
@@ -231,4 +246,4 @@ def build_graph(**_kwargs: object) -> CompiledStateGraph:
     graph = workflow.compile()
     logger.info("Graph compiled successfully")
 
-    return graph
+    return cast("Any", graph)

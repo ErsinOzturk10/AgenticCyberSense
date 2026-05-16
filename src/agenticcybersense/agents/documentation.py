@@ -28,7 +28,7 @@ class DocumentationAgent(BaseAgent):
         """Analyze the query to extract key security terms."""
         query_lower = query.lower()
 
-        analysis = {
+        analysis: dict[str, Any] = {
             "is_cve_query": "cve" in query_lower,
             "is_vulnerability_query": any(w in query_lower for w in ["vulnerability", "vuln", "exploit", "attack"]),
             "is_threat_query": any(w in query_lower for w in ["threat", "malware", "ransomware", "phishing"]),
@@ -77,7 +77,7 @@ class DocumentationAgent(BaseAgent):
         response_parts.append("3. Consult additional threat intelligence sources for current threat landscape\n")
 
         # Create findings
-        findings = []
+        findings: list[Finding] = []
         if analysis["is_cve_query"] or analysis["is_vulnerability_query"]:
             findings.append(
                 Finding(

@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 
 class Severity(str, Enum):
@@ -38,7 +39,7 @@ class SourceRef:
     name: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     raw_content: str | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -54,7 +55,7 @@ class Finding:
     tags: list[str] = field(default_factory=list)
     indicators: list[str] = field(default_factory=list)  # IOCs
     recommendations: list[str] = field(default_factory=list)
-    raw_data: dict = field(default_factory=dict)
+    raw_data: dict[str, Any] = field(default_factory=dict)
     verified: bool = False
 
     def __post_init__(self) -> None:

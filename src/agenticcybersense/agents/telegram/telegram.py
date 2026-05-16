@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
@@ -13,6 +13,9 @@ from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
 
 
 @register_agent
@@ -29,9 +32,16 @@ class TelegramAgent(BaseAgent):
         {"name": "CVE Feed", "id": "@CVE_Feed", "type": "cve"},
     ]
 
-    def __init__(self, target_groups: list[dict[str, str]] | None = None, **_kwargs: object) -> None:
-        """Initialize the Telegram agent."""
-        super().__init__(**(_kwargs or {}))
+    def __init__(self, target_groups: list[dict[str, str]] | None = None, llm: BaseChatModel | None = None) -> None:
+        """Initialize the Telegram agent.
+
+        Args:
+            target_groups: A list of dictionaries containing target group configurations with string keys and values.
+                           Defaults to DEFAULT_CHANNELS if not provided.
+            llm: Optional language model to pass to the parent class initializer.
+
+        """
+        super().__init__(llm=llm)
         self.target_groups = target_groups or self.DEFAULT_CHANNELS
 
     def _empty_channel_result(
