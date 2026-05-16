@@ -35,7 +35,7 @@ class Settings:
 
     # MCP Settings
     mcp_server_host: str = field(default_factory=lambda: os.getenv("MCP_SERVER_HOST", "localhost"))
-    mcp_server_port: int = field(default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8765")))
+    mcp_server_port: int = field(default_factory=lambda: int(os.getenv("MCP_SERVER_PORT", "8000")))
     # Target URL for MCP clients / SSE endpoints
     mcp_target_url: str = field(
         default_factory=lambda: os.getenv(
@@ -46,7 +46,7 @@ class Settings:
 
     # API Server Settings
     api_host: str = field(default_factory=lambda: os.getenv("API_HOST", "0.0.0.0"))  # noqa: S104
-    api_port: int = field(default_factory=lambda: int(os.getenv("API_PORT", "8000")))
+    api_port: int = field(default_factory=lambda: int(os.getenv("API_PORT", "7001")))
 
     # Logging
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
@@ -54,7 +54,7 @@ class Settings:
     # Telegram client settings
     tg_api_id: int = field(default_factory=lambda: int(os.getenv("TG_API_ID", "0")))
     tg_api_hash: str = field(default_factory=lambda: os.getenv("TG_API_HASH", ""))
-    tg_session_name: str = field(default_factory=lambda: os.getenv("TG_SESSION_NAME", "agentic_telegram"))
+    tg_session_name: str = field(default_factory=lambda: os.getenv("TG_SESSION_NAME", "agentic_telegram_session"))
 
     # Agent / parser settings
     telegram_keywords: str = field(default_factory=lambda: os.getenv("TELEGRAM_KEYWORDS", ""))  # comma-separated

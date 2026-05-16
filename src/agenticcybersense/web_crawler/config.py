@@ -10,6 +10,24 @@ load_dotenv()
 # Use the web_crawler directory regardless of the process working directory.
 _BASE_DIR = Path(__file__).parent
 
+
+def _read_int_env(name: str, default: int) -> int:
+    """Parse integer env vars while tolerating common markdown copy/paste artifacts."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    normalized_value = raw_value.strip().strip("`")
+    if normalized_value == "":
+        return default
+
+    try:
+        return int(normalized_value)
+    except ValueError as exc:
+        msg = f"Invalid integer value for {name}: {raw_value!r}"
+        raise ValueError(msg) from exc
+
+
 # Path to the Excel file containing site configurations.
 SITES_FILE: str = os.getenv(
     "CRAWLER_SITES_FILE",
@@ -48,5 +66,5 @@ ENABLE_INCREMENTAL = True
 FORCE_FULL_CRAWL = False
 
 # Scheduler
-SCHEDULE_HOUR: int = int(os.getenv("CRAWLER_SCHEDULE_HOUR", "0"))
-SCHEDULE_MINUTE: int = int(os.getenv("CRAWLER_SCHEDULE_MINUTE", "0"))
+SCHEDULE_HOUR: int = _read_int_env("CRAWLER_SCHEDULE_HOUR", 0)
+SCHEDULE_MINUTE: int = _read_int_env("CRAWLER_SCHEDULE_MINUTE", 0)
