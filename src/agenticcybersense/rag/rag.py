@@ -13,7 +13,7 @@ import logging
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, cast
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PyPDFLoader
@@ -59,17 +59,17 @@ def _sha256_file(path: Path, chunk_size: int = HASH_READ_CHUNK_SIZE) -> str:
     return h.hexdigest()
 
 
-def _load_manifest() -> dict:
+def _load_manifest() -> dict[str, Any]:
     if MANIFEST_PATH.exists():
         try:
-            return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            return cast("dict[str, Any]", json.loads(MANIFEST_PATH.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("%s: %s", ERR_MANIFEST_BAD, e)
             return {"files": {}}
     return {"files": {}}
 
 
-def _save_manifest(manifest: dict) -> None:
+def _save_manifest(manifest: dict[str, Any]) -> None:
     DB_PATH.mkdir(parents=True, exist_ok=True)
     MANIFEST_PATH.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -94,12 +94,12 @@ def _build_embeddings() -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
 
-def _split_docs(documents: list) -> list:
+def _split_docs(documents: list[Any]) -> list[Any]:
     splitter = RecursiveCharacterTextSplitter(chunk_size=TEXT_CHUNK_SIZE, chunk_overlap=TEXT_CHUNK_OVERLAP)
-    return splitter.split_documents(documents)
+    return cast("list[Any]", splitter.split_documents(documents))
 
 
-def _make_chunk_ids(file_sha: str, docs: list) -> list[str]:
+def _make_chunk_ids(file_sha: str, docs: list[Any]) -> list[str]:
     return [f"{file_sha}:{d.metadata.get('page', 'na')}:{i}" for i, d in enumerate(docs)]
 
 
@@ -152,7 +152,7 @@ def _ingest_pdf(vectordb: Chroma, pdf_path: Path, file_sha: str) -> int:
     return len(docs)
 
 
-def initialize_rag(*, rebuild: bool = False) -> dict:  # noqa: PLR0915
+def initialize_rag(*, rebuild: bool = False) -> dict[str, Any]:  # noqa: PLR0915
     """Initialize the RAG vector store by ingesting PDFs from the data directory."""
     logger.info("Initializing RAG vector store...")
     embeddings = _build_embeddings()
@@ -160,7 +160,7 @@ def initialize_rag(*, rebuild: bool = False) -> dict:  # noqa: PLR0915
     if not pdfs:
         raise RuntimeError(ERR_NO_PDF)
 
-    status = {
+    status: dict[str, Any] = {
         "mode": "load",
         "pdf_total": len(pdfs),
         "added_pdfs": 0,
@@ -192,7 +192,7 @@ def initialize_rag(*, rebuild: bool = False) -> dict:  # noqa: PLR0915
             embedding_function=embeddings,
         )
 
-        manifest = {"files": {}}
+        manifest: dict[str, Any] = {"files": {}}
         for pdf in pdfs:
             st = pdf.stat()
             file_sha = _sha256_file(pdf)
@@ -264,7 +264,7 @@ def rag_search(query: str, k: int = 4) -> str:
 
     response_parts: list[str] = []
     for r in results:
-        src_path = r.metadata.get("source", "unknown")
+        src_path = str(r.metadata.get("source", "unknown"))
         src_name = Path(src_path).name if src_path != "unknown" else "unknown"
         page0 = r.metadata.get("page", None)
         page = (page0 + 1) if isinstance(page0, int) else "N/A"

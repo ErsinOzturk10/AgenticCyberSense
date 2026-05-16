@@ -28,7 +28,7 @@ async def run_agent() -> None:
     server_config = {
         "dummy-server": {
             "transport": "sse",
-            "url": settings.mcp_target_url,  # type: ignore[attr-defined
+            "url": settings.mcp_target_url,
         },
     }
 
