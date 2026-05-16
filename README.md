@@ -29,7 +29,7 @@ AgenticCyberSense is an AI-powered cyber threat intelligence platform that uses 
                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              API Server (FastAPI)                            │
-│                              Port: 7002                                      │
+│                              Port: 7001                                      │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
                                   ▼
@@ -338,7 +338,7 @@ OLLAMA_MODEL=llama3.2
 
 # API Server
 API_HOST=0.0.0.0
-API_PORT=7002
+API_PORT=7001
 
 # RAG Settings
 CHROMA_PERSIST_DIR=./data/chroma_db
@@ -357,11 +357,11 @@ LOG_LEVEL=INFO
 
 1. Start the API server:
    ```bash
-   uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7002
+        uv run uvicorn agenticcybersense.api_server:app --host 0.0.0.0 --port 7001
    ```
 
 2. Configure OpenWebUI — go to **Admin Panel → Settings → Connections → OpenAI API**:
-   - **URL**: `http://host.docker.internal:7002/v1` (if OpenWebUI runs in Docker)
+        - **URL**: `http://host.docker.internal:7001/v1` (if OpenWebUI runs in Docker)
    - **Key**: `sk-any-value`
    - **Model**: `agenticcybersense`
 
@@ -372,8 +372,8 @@ LOG_LEVEL=INFO
 > ```powershell
 > # Admin PowerShell
 > netsh interface portproxy add v4tov4 `
->   listenport=7002 listenaddress=0.0.0.0 `
->   connectport=7002 connectaddress=<WSL_IP>
+>   listenport=7001 listenaddress=0.0.0.0 `
+>   connectport=7001 connectaddress=<WSL_IP>
 > ```
 >
 > Get your WSL IP: `ip addr show eth0 | grep "inet "`
@@ -381,7 +381,7 @@ LOG_LEVEL=INFO
 ### With cURL
 
 ```bash
-curl -X POST http://localhost:7002/v1/chat/completions \
+curl -X POST http://localhost:7001/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-test" \
   -d '{
