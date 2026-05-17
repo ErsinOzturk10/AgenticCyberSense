@@ -76,12 +76,12 @@ class BaseAgent(ABC):
             human_message_cls = m.HumanMessage
             system_message_cls = m.SystemMessage
             lc_messages.append(system_message_cls(content=self.get_system_prompt()))
-            lc_messages.append(human_message_cls(content=request.user_message))
+            lc_messages.append(human_message_cls(content=request.query))
         except (ImportError, AttributeError):
             # Fallback to simple dict-based messages if langchain_core is not installed.
             lc_messages = [
                 {"role": "system", "content": self.get_system_prompt()},
-                {"role": "user", "content": request.user_message},
+                {"role": "user", "content": request.query},
             ]
         return lc_messages
 

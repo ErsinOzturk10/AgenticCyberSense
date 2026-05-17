@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_ollama import ChatOllama
 
@@ -21,7 +21,7 @@ _llm_instance: BaseChatModel | None = None
 def create_llm(
     provider: str | None = None,
     model: str | None = None,
-    **_kwargs: object,
+    **kwargs: Any,  # noqa: ANN401
 ) -> BaseChatModel:
     """Create a new LLM instance.
 
@@ -39,11 +39,13 @@ def create_llm(
 
     if provider == "ollama":
         model = model or settings.ollama_model
+        temperature_value = kwargs.pop("temperature", 0.7)
+        temperature = float(temperature_value) if temperature_value is not None else None
         return ChatOllama(
             base_url=settings.ollama_base_url,
             model=model,
-            temperature=_kwargs.get("temperature", 0.7),
-            **{k: v for k, v in _kwargs.items() if k != "temperature"},
+            temperature=temperature,
+            **kwargs,
         )
 
     if provider == "openai":
@@ -54,7 +56,7 @@ def create_llm(
     raise ValueError(msg)
 
 
-def get_llm(**_kwargs: object) -> BaseChatModel:
+def get_llm(**kwargs: Any) -> BaseChatModel:  # noqa: ANN401
     """Get or create the global LLM instance.
 
     Args:
@@ -66,7 +68,7 @@ def get_llm(**_kwargs: object) -> BaseChatModel:
     """
     global _llm_instance  # noqa: PLW0603
     if _llm_instance is None:
-        _llm_instance = create_llm(**_kwargs)
+        _llm_instance = create_llm(**kwargs)
     return _llm_instance
 
 

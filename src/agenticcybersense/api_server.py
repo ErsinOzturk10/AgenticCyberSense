@@ -6,7 +6,7 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -17,16 +17,24 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agenticcybersense.logging_utils import get_logger, setup_logging
 from agenticcybersense.settings import settings
+from agenticcybersense.web_crawler.config import SCHEDULE_HOUR, SCHEDULE_MINUTE
 
 logger = get_logger("api_server")
 
 # Global graph instance
-_graph = None
+_graph: Any | None = None
+
+# Scheduler defaults
+SCHED_HOUR = SCHEDULE_HOUR
+SCHED_MINUTE = SCHEDULE_MINUTE
+
+# Streaming chunk size for SSE responses
+STREAM_CHUNK_SIZE = 20
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler."""
+    """Application lifespan handler — runs on startup and shutdown."""
     global _graph  # noqa: PLW0603
     setup_logging(settings.log_level)
     logger.info("=" * 60)
@@ -39,33 +47,55 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         from agenticcybersense.rag.rag import initialize_rag  # noqa: PLC0415
 
         status = initialize_rag(rebuild=False)
-        logger.info("✅ RAG initialized: %s", status)
+        logger.info("RAG initialized: %s", status)
     except Exception:
-        logger.exception("❌ RAG initialization failed (documentation agent will be limited)")
+        logger.exception("RAG initialization failed (documentation agent will be limited)")
 
+    # Build the LangGraph orchestration graph
     try:
         from agenticcybersense.graph.build_graph import build_graph  # noqa: PLC0415
 
         _graph = build_graph()
-        logger.info("✅ Orchestration graph initialized")
+        logger.info("Orchestration graph initialized")
     except Exception:
-        logger.exception("❌ Failed to initialize graph")
+        logger.exception("Failed to initialize graph")
         _graph = None
+
+    # Start the webcrawler scheduler — runs daily at 02:00
+    # Set run_on_startup=True to trigger an immediate crawl when the server starts
+    try:
+        from agenticcybersense.web_crawler.crawler_scheduler import start_scheduler  # noqa: PLC0415
+
+        await start_scheduler(hour=SCHED_HOUR, minute=SCHED_MINUTE)
+        logger.info("Crawler scheduler started")
+    except Exception:
+        logger.exception("Crawler scheduler could not be started")
 
     try:
         yield
     finally:
+        # Stop the scheduler gracefully on shutdown
+        try:
+            from agenticcybersense.web_crawler.crawler_scheduler import stop_scheduler  # noqa: PLC0415
+
+            await stop_scheduler()
+        except Exception:
+            logger.exception("Crawler scheduler could not be stopped")
+
         logger.info("Shutting down API Server")
 
 
-# Create the FastAPI app
+# ---------------------------------------------------------------------------
+# FastAPI application
+# ---------------------------------------------------------------------------
+
 app = FastAPI(
     title="AgenticCyberSense API",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-# Add CORS middleware
+# Allow all origins so OpenWebUI (running in Docker) can reach this server
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -76,7 +106,7 @@ app.add_middleware(
 
 
 async def process_with_agents(query: str, conversation_id: str, context: dict[str, Any] | None = None) -> str:
-    """Process a query through the agent orchestration system."""
+    """Route a query through the agent orchestration graph and return the final response."""
     if _graph is None:
         return "Orchestration graph not available"
 
@@ -98,11 +128,13 @@ async def process_with_agents(query: str, conversation_id: str, context: dict[st
         }
 
         logger.info("Processing query: %s", query[:100])
-        result = await _graph.ainvoke(initial_state)
+        result = cast("dict[str, Any]", await _graph.ainvoke(initial_state))
 
-        final_response = result.get("final_response", "Processing complete.")
-        agents = result.get("agents_consulted", [])
-        findings_count = len(result.get("findings", []))
+        final_response = str(result.get("final_response", "Processing complete."))
+        agents_raw = result.get("agents_consulted", [])
+        agents = [str(agent) for agent in agents_raw] if isinstance(agents_raw, list) else []
+        findings_raw = result.get("findings", [])
+        findings_count = len(findings_raw) if isinstance(findings_raw, list) else 0
 
         if agents:
             final_response += f"\n\n---\n*Agents: {', '.join(agents)} | Findings: {findings_count}*"
@@ -114,27 +146,27 @@ async def process_with_agents(query: str, conversation_id: str, context: dict[st
     return final_response
 
 
-# ============================================
-# API Endpoints
-# ============================================
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/")
 async def root() -> dict[str, Any]:
-    """Root endpoint."""
+    """Health/info endpoint."""
     return {"name": "AgenticCyberSense", "version": "0.1.0", "status": "running"}
 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    """Health check endpoint."""
+    """Detailed health check."""
     return {"status": "healthy", "timestamp": datetime.now(UTC).isoformat()}
 
 
 @app.get("/v1/models")
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
-    """List available models (OpenAI compatible)."""
+    """List available models — OpenAI-compatible format."""
     logger.info("GET /v1/models called")
     return {
         "object": "list",
@@ -152,16 +184,17 @@ async def list_models() -> dict[str, Any]:
 @app.post("/v1/chat/completions", response_model=None)
 @app.post("/chat/completions", response_model=None)
 async def chat_completions(request: Request) -> Response:
-    """OpenAI-compatible chat completions endpoint."""
+    """OpenAI-compatible chat completions endpoint.
+
+    Supports both streaming (SSE) and non-streaming responses.
+    """
     logger.info("=" * 40)
     logger.info("POST /v1/chat/completions called")
 
     try:
-        # Parse request body
         body = await request.json()
         logger.info("Request body: %s", json.dumps(body, indent=2)[:500])
 
-        # Extract messages
         messages = body.get("messages", [])
         if not messages:
             return JSONResponse(
@@ -169,7 +202,7 @@ async def chat_completions(request: Request) -> Response:
                 content={"error": {"message": "No messages provided", "type": "invalid_request_error"}},
             )
 
-        # Find the last user message
+        # Extract the last user message from the conversation history
         user_message = ""
         for msg in reversed(messages):
             if isinstance(msg, dict) and msg.get("role") == "user":
@@ -184,7 +217,6 @@ async def chat_completions(request: Request) -> Response:
                 content={"error": {"message": "No user message found", "type": "invalid_request_error"}},
             )
 
-        # Process the query
         stream = body.get("stream", False)
         model = body.get("model", "agenticcybersense")
         conversation_id = str(uuid.uuid4())
@@ -192,15 +224,16 @@ async def chat_completions(request: Request) -> Response:
         response_content = await process_with_agents(user_message, conversation_id)
         logger.info("Response generated: %d chars", len(response_content))
 
+        # --- Streaming response ---
         if stream:
 
             async def generate() -> AsyncGenerator[str, None]:
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
                 created = int(datetime.now(UTC).timestamp())
 
-                # Send content in chunks
-                for i in range(0, len(response_content), 20):
-                    chunk_text = response_content[i : i + 20]
+                # Send response content in small chunks to simulate streaming
+                for i in range(0, len(response_content), STREAM_CHUNK_SIZE):
+                    chunk_text = response_content[i : i + STREAM_CHUNK_SIZE]
                     chunk_data = {
                         "id": chunk_id,
                         "object": "chat.completion.chunk",
@@ -210,7 +243,7 @@ async def chat_completions(request: Request) -> Response:
                     }
                     yield f"data: {json.dumps(chunk_data)}\n\n"
 
-                # Final chunk
+                # Final chunk signals end of stream
                 final_data = {
                     "id": chunk_id,
                     "object": "chat.completion.chunk",
@@ -223,7 +256,7 @@ async def chat_completions(request: Request) -> Response:
 
             return StreamingResponse(generate(), media_type="text/event-stream")
 
-        # Non-streaming response
+        # --- Non-streaming response ---
         response_data = {
             "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
             "object": "chat.completion",
@@ -262,7 +295,7 @@ async def chat_completions(request: Request) -> Response:
 @app.get("/v1/agents")
 @app.get("/agents")
 async def list_agents() -> dict[str, Any]:
-    """List available CTI agents."""
+    """List all registered CTI agents."""
     try:
         from agenticcybersense.agents.registry import get_registry  # noqa: PLC0415
 
@@ -274,8 +307,8 @@ async def list_agents() -> dict[str, Any]:
 
 
 def run_server(host: str | None = None, port: int | None = None) -> None:
-    """Run the API server."""
-    import uvicorn  # local import is intentional  # noqa: PLC0415
+    """Start the API server using uvicorn."""
+    import uvicorn  # noqa: PLC0415
 
     host = host or settings.api_host
     port = port or settings.api_port

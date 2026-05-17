@@ -8,12 +8,19 @@ the Telegram agent.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 if TYPE_CHECKING:
     import types  # moved into TYPE_CHECKING to satisfy TC003 (used only for annotations)
 
-from telethon import TelegramClient, errors
+try:
+    from telethon import TelegramClient as _TelegramClient  # type: ignore[import-untyped]
+    from telethon import errors as _telethon_errors
+except ImportError:  # telethon is optional
+    _TelegramClient = None
+    _telethon_errors = None
+
+UsernameNotOccupiedError = _telethon_errors.rpcerrorlist.UsernameNotOccupiedError if _telethon_errors is not None else RuntimeError
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +45,10 @@ class TelegramClientWrapper:
         self.api_id = int(api_id)
         self.api_hash = api_hash
         self.session_name = session_name
-        self._client = TelegramClient(self.session_name, self.api_id, self.api_hash)
+        if _TelegramClient is None:
+            msg = "telethon is not installed"
+            raise RuntimeError(msg)
+        self._client: Any = _TelegramClient(self.session_name, self.api_id, self.api_hash)
         self._started = False
 
     async def __aenter__(self) -> Self:
@@ -101,8 +111,9 @@ class TelegramClientWrapper:
         await self.start()
         try:
             entity = await self._client.get_entity(channel_username)
-            return await self._client.get_messages(entity, limit=limit)
-        except errors.rpcerrorlist.UsernameNotOccupiedError:
+            messages = await self._client.get_messages(entity, limit=limit)
+            return cast("list[Any]", messages)
+        except UsernameNotOccupiedError:
             logger.warning("Channel not found: %s", channel_username)
             return []
         except Exception:
