@@ -100,6 +100,10 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
 
         # 2) System Prompt
         system_prompt = (
+            "IMPORTANT:\n"
+            "When calling ANY tool, ALWAYS pass the user's message as the argument user_input.\n"
+            "For example: {\"user_input\": \"<user's prompt>\"}.\n"
+            "Do NOT use 'query', 'q', or leave the arguments empty. If you do not pass user_input, the tool will fail.\n\n"
             "You are an intelligent assistant that can use tools when necessary.\n"
             "But rag_search is mandatory as the first tool call for every user request.\n"
             "Never call any tools before rag_search.\n"
