@@ -68,13 +68,19 @@ class HashDedupPipeline:
             self._processed += 1
             return item
 
-        # Main page (depth 0): check if deep crawl is needed
+        # Main page (depth 0): a pipeline cannot prevent already-scheduled
+        # subpage requests, so do not drop the root item here. The deep-crawl
+        # short-circuit must happen in the spider before yielding subpage
+        # requests.
         if depth == 0:
             should_crawl, _reason = self._history.should_deep_crawl(url, content)
             if not should_crawl:
                 self._skipped += 1
-                msg = f"Content unchanged (hash match): {url}"
-                raise DropItem(msg)
+                logger.info(
+                    "Root page unchanged (hash match), but not dropping in pipeline "
+                    "because subpage requests must be short-circuited before scheduling: %s",
+                    url,
+                )
         else:
             # Subpage: check subpage hash
             should_process, _reason = self._history.should_crawl_subpage(url, content)
