@@ -184,7 +184,8 @@ class CyberSpider(scrapy.Spider):
 
         # Follow same-domain links based on depth limits
         max_links = DEPTH_LIMITS.get(current_depth, 0)
-        if max_links == 0 or current_depth >= (max(DEPTH_LIMITS.keys()) if DEPTH_LIMITS else 1):
+        max_depth = max((k for k, v in DEPTH_LIMITS.items() if v != 0), default=1)
+        if max_links == 0 or current_depth >= max_depth:
             return
 
         # Select links to follow
