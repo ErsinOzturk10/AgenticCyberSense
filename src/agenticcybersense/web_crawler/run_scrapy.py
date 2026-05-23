@@ -71,15 +71,16 @@ async def run_scrapy_crawl() -> None:
     d = runner.crawl(CyberSpider)
 
     # Convert Twisted Deferred to asyncio Future
-    future: asyncio.Future[None] = asyncio.Future()
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[None] = loop.create_future()
 
     def on_success(result: object) -> None:  # noqa: ARG001
         if not future.done():
-            future.get_event_loop().call_soon_threadsafe(future.set_result, None)
+            loop.call_soon_threadsafe(future.set_result, None)
 
     def on_error(failure: object) -> None:
         if not future.done():
-            future.get_event_loop().call_soon_threadsafe(
+            loop.call_soon_threadsafe(
                 future.set_exception,
                 Exception(f"Scrapy crawl failed: {failure}"),
             )
