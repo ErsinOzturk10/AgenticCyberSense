@@ -2,7 +2,7 @@
 
 Called from api_server.py lifespan.
 Runs the full crawl cycle once per day at a configurable time (default 02:00).
-After the crawl finishes, main_trafilatura.py automatically ingests the
+After the crawl finishes, the Scrapy pipeline automatically ingests the
 updated JSON into ChromaDB so the web agent always has fresh data.
 
 Usage — add to api_server.py lifespan::
@@ -35,21 +35,21 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def run_crawler_and_ingest() -> None:
-    """Run the full crawl cycle.
+    """Run the full crawl cycle using Scrapy.
 
-    Calls main() from main_trafilatura.py which:
-    1. Crawls all configured sites (hash-based incremental by default)
-    2. Saves results to output/latest_results.json
-    3. Ingests the JSON into ChromaDB via rag_ingest.py
+    Calls run_scrapy_crawl() which:
+    1. Crawls all configured sites via Scrapy spider (hash-based incremental by default)
+    2. Saves results to output/latest_results.json (via JsonExportPipeline)
+    3. Ingests the JSON into ChromaDB (via RagIngestPipeline)
     """
     logger.info("=" * 60)
-    logger.info("Scheduled crawler starting...")
+    logger.info("Scheduled Scrapy crawler starting...")
     logger.info("=" * 60)
 
     try:
-        from agenticcybersense.web_crawler.main_trafilatura import main  # noqa: PLC0415
+        from agenticcybersense.web_crawler.run_scrapy import run_scrapy_crawl  # noqa: PLC0415
 
-        await main()
+        await run_scrapy_crawl()
         logger.info("Scheduled crawl completed successfully")
     except Exception as exc:
         logger.exception("Scheduled crawl failed: %s", exc)
