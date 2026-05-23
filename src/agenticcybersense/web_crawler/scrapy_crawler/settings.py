@@ -75,7 +75,7 @@ PLAYWRIGHT_CONTEXTS = {
     "default": {
         "viewport": {"width": 1920, "height": 1080},
         "locale": "en-US",
-        "java_script_enabled": True,
+        "javaScriptEnabled": True,
     },
 }
 

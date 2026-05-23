@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import trafilatura
 from bs4 import BeautifulSoup
@@ -100,13 +100,3 @@ class TrafilaturaPipeline:
         except Exception:
             logger.exception("Fallback extraction failed")
             return ""
-
-    def _build_metadata(self, item: CrawlPageItem, content_length: int) -> dict[str, Any]:
-        """Build metadata dict for the item."""
-        return {
-            "status": "success" if content_length >= MIN_CONTENT_LENGTH else "partial",
-            "extraction_type": item.get("extraction_type", "general"),
-            "method": item.get("method", "unknown"),
-            "content_length": content_length,
-            "link_count": len(item.get("links", [])),
-        }
