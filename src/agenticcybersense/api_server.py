@@ -221,6 +221,12 @@ async def chat_completions(request: Request) -> Response:
         model = body.get("model", "agenticcybersense")
         conversation_id = str(uuid.uuid4())
 
+        logger.info(
+            "Active LLM provider: %s | model: %s",
+            settings.normalized_llm_provider(),
+            settings.active_llm_model(),
+        )
+
         response_content = await process_with_agents(user_message, conversation_id)
         logger.info("Response generated: %d chars", len(response_content))
 

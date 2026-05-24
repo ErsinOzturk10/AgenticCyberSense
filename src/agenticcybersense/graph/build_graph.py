@@ -146,12 +146,26 @@ async def telegram_node(state_dict: GraphStateDict) -> GraphStateDict:
     return _to_dict(state)
 
 
-async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:
-    """Synthesize all agent responses."""
+async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:  # noqa: PLR0915
+    """Synthesize all agent responses.
+
+    By default, this builds the existing fast deterministic report.
+
+    If API_ENABLE_LLM_SYNTHESIS=true is set in .env, the agent outputs are
+    passed through the configured LLM provider for final CTI synthesis.
+
+    If LLM synthesis fails, the deterministic report is returned as fallback.
+    """
+    import os  # noqa: PLC0415
+    import time  # noqa: PLC0415
+
     state = _from_dict(state_dict)
     logger.info("Synthesizing responses from %d agents", len(state.agents_consulted))
 
-    # Build final report
+    # ---------------------------------------------------------------------
+    # 1. Build deterministic report first.
+    #    This is the safe fallback if LLM synthesis is disabled or fails.
+    # ---------------------------------------------------------------------
     parts = [
         "# 🛡️ Cyber Threat Intelligence Report\n\n",
         f"**Query:** {state.query}\n\n",
@@ -164,7 +178,6 @@ async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:
         parts.append(response.content)
         parts.append("\n\n")
 
-    # Summary section
     parts.append("---\n\n")
     parts.append("## 📊 Summary\n\n")
     parts.append(f"- **Agents Consulted:** {', '.join(state.agents_consulted)}\n")
@@ -174,11 +187,134 @@ async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:
         parts.append("\n### Key Findings:\n")
         severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         sorted_findings = sorted(state.findings, key=lambda f: severity_order.get(f.severity.value, 5))
+
         for finding in sorted_findings[:5]:
-            emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "🔵"}.get(finding.severity.value, "⚪")
+            emoji = {
+                "critical": "🔴",
+                "high": "🟠",
+                "medium": "🟡",
+                "low": "🟢",
+                "info": "🔵",
+            }.get(finding.severity.value, "⚪")
             parts.append(f"- {emoji} **[{finding.severity.value.upper()}]** {finding.title}\n")
 
-    state.final_response = "".join(parts)
+    deterministic_report = "".join(parts)
+
+    # ---------------------------------------------------------------------
+    # 2. Optional LLM synthesis layer.
+    #
+    #    Controlled by environment configuration.
+    #
+    #    Optional prompt-size control:
+    #
+    #    If disabled, behavior stays like the original fast template report.
+    # ---------------------------------------------------------------------
+    enable_llm_synthesis = os.getenv("API_ENABLE_LLM_SYNTHESIS", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+    if not enable_llm_synthesis:
+        logger.info("LLM synthesis disabled; using deterministic synthesis report")
+        state.final_response = deterministic_report
+        state.is_complete = True
+        return _to_dict(state)
+
+    logger.info("LLM synthesis enabled; generating final report with configured LLM")
+
+    try:
+        from agenticcybersense.llm.factory import generate_text  # noqa: PLC0415
+
+        started_at = time.perf_counter()
+
+        max_agent_chars_raw = os.getenv("API_LLM_SYNTHESIS_MAX_AGENT_CHARS", "2500").strip()
+        try:
+            max_agent_chars = max(500, int(max_agent_chars_raw))
+        except ValueError:
+            logger.warning(
+                "Invalid API_LLM_SYNTHESIS_MAX_AGENT_CHARS=%r; using default 2500",
+                max_agent_chars_raw,
+            )
+            max_agent_chars = 2500
+
+        agent_sections = []
+        for agent_name, response in state.agent_responses.items():
+            status = "success" if response.success else "failed"
+            content = response.content or ""
+
+            if len(content) > max_agent_chars:
+                logger.info(
+                    "Truncating agent output for LLM synthesis | agent=%s | original_chars=%d | max_chars=%d",
+                    agent_name,
+                    len(content),
+                    max_agent_chars,
+                )
+                content = content[:max_agent_chars] + "\n\n[TRUNCATED: agent output shortened for LLM synthesis]"
+
+            agent_sections.append(f"## Agent: {agent_name}\nStatus: {status}\nContent:\n{content}\n")
+
+        agent_context = "\n\n---\n\n".join(agent_sections)
+
+        synthesis_prompt = f"""
+You are the final synthesis layer for AgenticCyberSense, a cyber threat intelligence system.
+
+Create a concise Markdown Cyber Threat Intelligence Report using ONLY the agent outputs below.
+
+Strict rules:
+- Do NOT invent facts, CVEs, channels, sources, numbers, timestamps, or definitions.
+- Do NOT change the subject of source statements.
+- If a source says "cyber threats are defined as...", do NOT rewrite it as "CVE is defined as...".
+- If the provided context does not define CVE directly, say that the retrieved documentation references CVE as part of vulnerability/exploit concepts.
+- Preserve source names, page numbers, channel names, findings counts, and severity labels when present.
+- If an agent says no results were found, keep that limitation.
+- Keep the answer shorter than 700 words.
+
+Required sections:
+1. Executive Summary
+2. Documentation Intelligence
+3. Web Intelligence
+4. Telegram Intelligence, only if Telegram data exists
+5. Key Findings
+6. Analyst Notes / Limitations
+
+User query:
+{state.query}
+
+Agents consulted:
+{", ".join(state.agents_consulted)}
+
+Total findings:
+{len(state.findings)}
+
+Agent outputs:
+{agent_context}
+""".strip()
+
+        logger.info(
+            "LLM synthesis prompt prepared | prompt_chars=%d | max_agent_chars=%d",
+            len(synthesis_prompt),
+            max_agent_chars,
+        )
+
+        llm_report = generate_text(synthesis_prompt)
+
+        if not llm_report.strip():
+            logger.warning("LLM synthesis returned empty output; falling back to deterministic report")
+            state.final_response = deterministic_report
+        else:
+            logger.info(
+                "LLM synthesis completed | elapsed_seconds=%.2f | output_chars=%d",
+                time.perf_counter() - started_at,
+                len(llm_report),
+            )
+            state.final_response = llm_report.strip()
+
+    except Exception:
+        logger.exception("LLM synthesis failed; falling back to deterministic report")
+        state.final_response = deterministic_report
+
     state.is_complete = True
     return _to_dict(state)
 
