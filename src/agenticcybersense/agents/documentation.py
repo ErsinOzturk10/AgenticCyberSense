@@ -84,7 +84,9 @@ class DocumentationAgent(BaseAgent):
         response_parts.append("\n**Retrieved Context:**\n")
         if should_abstain:
             response_parts.append(
-                "No documentation-specific context retrieved. This query targets a specific observable, so direct web or Telegram matches are more reliable than generic reference material.\n",
+                "No documentation-specific context retrieved. This query targets a specific "
+                "observable, so direct web or Telegram matches are more reliable than "
+                "generic reference material.\n",
             )
         else:
             response_parts.append(context)

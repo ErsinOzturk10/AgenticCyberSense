@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 
+WEB_ROUTING_TERMS = ("website", "web", "url", "news", "leak", "breach", "cve")
+TELEGRAM_ROUTING_TERMS = ("telegram", "channel", "group", "chat", "message")
+
+
 @register_agent
 class OrchestratorAgent(BaseAgent):
     """Orchestrator agent that coordinates other agents."""
@@ -81,9 +85,9 @@ class OrchestratorAgent(BaseAgent):
         has_threat_intent = has_threat_intel_intent(query_analysis)
 
         # Keyword-based routing
-        if query_analysis.is_observable_lookup or any(word in query_lower for word in ["website", "web", "url", "news", "leak", "breach", "cve"]):
+        if query_analysis.is_observable_lookup or any(word in query_lower for word in WEB_ROUTING_TERMS):
             agents.append("web")
-        if query_analysis.is_observable_lookup or has_breach_intent or has_threat_intent or any(word in query_lower for word in ["telegram", "channel", "group", "chat", "message"]):
+        if query_analysis.is_observable_lookup or has_breach_intent or has_threat_intent or any(word in query_lower for word in TELEGRAM_ROUTING_TERMS):
             agents.append("telegram")
 
         # If no specific agents identified, consult all

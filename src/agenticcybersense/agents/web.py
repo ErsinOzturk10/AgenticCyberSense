@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
-from agenticcybersense.query_analysis import analyze_query
+from agenticcybersense.query_analysis import QueryAnalysis, analyze_query
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 
@@ -214,12 +214,13 @@ class WebAgent(BaseAgent):
         if not checked_sources:
             return ""
 
-        return (
-            f"**Checked Web Sources ({len(checked_sources)}):**\n"
-            f"{', '.join(checked_sources)}\n\n"
-        )
+        return f"**Checked Web Sources ({len(checked_sources)}):**\n{', '.join(checked_sources)}\n\n"
 
-    def _filter_results(self, query_analysis: Any, rag_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _filter_results(
+        self,
+        query_analysis: QueryAnalysis,
+        rag_results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         if not query_analysis.observables:
             return rag_results
 

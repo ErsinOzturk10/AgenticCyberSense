@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 EMAIL_RE = re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}\b")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -11,6 +11,7 @@ IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,}\b", re.IGNORECASE)
 DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9-]+\.)+[A-Za-z]{2,}\b")
 TOKEN_RE = re.compile(r"[a-z0-9@._:/-]+")
+MIN_KEYWORD_LENGTH = 2
 
 BREACH_TERMS = (
     "breach",
@@ -195,7 +196,7 @@ def _extract_keywords(query: str, observables: list[str]) -> list[str]:
         lowered = lowered.replace(observable.lower(), " ")
 
     tokens = TOKEN_RE.findall(lowered)
-    keywords = [token for token in tokens if token not in STOPWORDS and len(token) > 2]
+    keywords = [token for token in tokens if token not in STOPWORDS and len(token) > MIN_KEYWORD_LENGTH]
     return _dedupe(keywords)
 
 

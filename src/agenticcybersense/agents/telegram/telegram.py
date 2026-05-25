@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
-from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
+from agenticcybersense.agents.telegram.parser import normalize_message
 from agenticcybersense.query_analysis import QueryAnalysis, analyze_query, query_matches_text
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse

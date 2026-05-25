@@ -3,23 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import agenticcybersense.agents.web as web_module
 from agenticcybersense.agents.documentation import DocumentationAgent
 from agenticcybersense.agents.telegram.telegram import TelegramAgent
 from agenticcybersense.agents.web import WebAgent
 from agenticcybersense.graph.build_graph import _determine_pending_agents
+from agenticcybersense.query_analysis import analyze_query, query_matches_text
 from agenticcybersense.schemas.messages import AgentRequest
 from agenticcybersense.settings import settings
 from agenticcybersense.web_crawler import rag_ingest
 
+if TYPE_CHECKING:
+    import pytest
 
-def test_web_agent_refines_observable_queries(monkeypatch) -> None:
+
+EXPECTED_WEB_RAG_RESULTS = 8
+
+
+def test_web_agent_refines_observable_queries(monkeypatch: pytest.MonkeyPatch) -> None:
     """Web queries should be reduced to the observable plus breach intent terms."""
     raw_query = "could you check eo@gmail.com email adress had a leakage on website that you strored"
     captured: dict[str, str] = {}
 
     def fake_query_webcrawler_rag(query: str, n_results: int = 5) -> list[dict[str, object]]:
+        assert n_results == EXPECTED_WEB_RAG_RESULTS
         captured["query"] = query
         return [
             {
@@ -45,20 +54,20 @@ def test_web_agent_refines_observable_queries(monkeypatch) -> None:
 
 def test_telegram_agent_matches_email_breach_prompts() -> None:
     """Telegram filtering should match messages containing the extracted observable."""
-    agent = TelegramAgent()
     raw_query = "could you check eo@gmail.com email adress had a leakage on website that you strored"
 
-    assert agent._message_matches_query(
-        raw_query,
+    assert query_matches_text(
+        analyze_query(raw_query),
         "New breach exposes eo@gmail.com credentials on a criminal forum.",
     )
 
 
-def test_web_agent_discards_irrelevant_semantic_matches(monkeypatch) -> None:
+def test_web_agent_discards_irrelevant_semantic_matches(monkeypatch: pytest.MonkeyPatch) -> None:
     """Observable lookups should not return pages that omit the requested observable."""
     raw_query = "could you check eo@gmail.com email adress had a leakage on website that you strored"
 
-    def fake_query_webcrawler_rag(query: str, n_results: int = 5) -> list[dict[str, object]]:
+    def fake_query_webcrawler_rag(_query: str, n_results: int = 5) -> list[dict[str, object]]:
+        assert n_results == EXPECTED_WEB_RAG_RESULTS
         return [
             {
                 "content": "General write-up about phishing and account security.",
@@ -79,11 +88,12 @@ def test_web_agent_discards_irrelevant_semantic_matches(monkeypatch) -> None:
     assert "No direct matches found" in response.content
 
 
-def test_documentation_agent_abstains_for_observable_lookups(monkeypatch) -> None:
+def test_documentation_agent_abstains_for_observable_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
     """Documentation RAG should not run for exact observable breach lookups."""
 
-    async def fail_if_called(self, query: str) -> str:
-        raise AssertionError(f"unexpected RAG lookup for {query}")
+    async def fail_if_called(_self: DocumentationAgent, query: str) -> str:
+        message = f"unexpected RAG lookup for {query}"
+        raise AssertionError(message)
 
     raw_query = "could you check eo@gmail.com email adress had a leakage on website that you strored"
     monkeypatch.setattr(DocumentationAgent, "_retrieve_context", fail_if_called)
@@ -114,11 +124,12 @@ def test_graph_routes_ddos_website_queries_to_telegram() -> None:
     assert agents == ["web", "telegram"]
 
 
-def test_web_report_lists_checked_sources(monkeypatch) -> None:
+def test_web_report_lists_checked_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     """The web report should tell the user which monitored sources were checked."""
     raw_query = 'could you check if my mail adress is seen on web: "eray.umut100@gmail.com"'
 
-    def fake_query_webcrawler_rag(query: str, n_results: int = 5) -> list[dict[str, object]]:
+    def fake_query_webcrawler_rag(_query: str, n_results: int = 5) -> list[dict[str, object]]:
+        assert n_results == EXPECTED_WEB_RAG_RESULTS
         return []
 
     monkeypatch.setattr(rag_ingest, "query_webcrawler_rag", fake_query_webcrawler_rag)
@@ -132,7 +143,7 @@ def test_web_report_lists_checked_sources(monkeypatch) -> None:
     assert "misp-project.org" in response.content
 
 
-def test_telegram_report_lists_checked_channels(monkeypatch) -> None:
+def test_telegram_report_lists_checked_channels(monkeypatch: pytest.MonkeyPatch) -> None:
     """Telegram reports should show the channels that were checked."""
     raw_query = 'could you check if my mail adress is seen on web: "eray.umut100@gmail.com"'
 
