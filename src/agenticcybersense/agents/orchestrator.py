@@ -6,10 +6,15 @@ from typing import TYPE_CHECKING, Any
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import get_registry, register_agent
+from agenticcybersense.query_analysis import analyze_query, has_threat_intel_intent
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
+
+
+WEB_ROUTING_TERMS = ("website", "web", "url", "news", "leak", "breach", "cve")
+TELEGRAM_ROUTING_TERMS = ("telegram", "channel", "group", "chat", "message")
 
 
 @register_agent
@@ -75,11 +80,14 @@ class OrchestratorAgent(BaseAgent):
         """Determine which agents to consult based on query."""
         agents = []
         query_lower = query.lower()
+        query_analysis = analyze_query(query)
+        has_breach_intent = any(term in query_analysis.intent_terms for term in ("breach", "leak"))
+        has_threat_intent = has_threat_intel_intent(query_analysis)
 
         # Keyword-based routing
-        if any(word in query_lower for word in ["website", "web", "url", "news", "leak", "breach", "cve"]):
+        if query_analysis.is_observable_lookup or any(word in query_lower for word in WEB_ROUTING_TERMS):
             agents.append("web")
-        if any(word in query_lower for word in ["telegram", "channel", "group", "chat", "message"]):
+        if query_analysis.is_observable_lookup or has_breach_intent or has_threat_intent or any(word in query_lower for word in TELEGRAM_ROUTING_TERMS):
             agents.append("telegram")
 
         # If no specific agents identified, consult all

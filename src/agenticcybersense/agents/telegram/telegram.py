@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
-from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
+from agenticcybersense.agents.telegram.parser import normalize_message
+from agenticcybersense.query_analysis import QueryAnalysis, analyze_query, query_matches_text
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
@@ -110,11 +110,11 @@ class TelegramAgent(BaseAgent):
             )
             return self._empty_channel_result(channel, status="fetch_failed", error=str(e))
 
-    async def _analyze_messages(self, query: str, results: list[dict[str, Any]]) -> list[Finding]:
+    async def _analyze_messages(self, query: str | QueryAnalysis, results: list[dict[str, Any]]) -> list[Finding]:
         """Analyze messages for relevant threat intelligence."""
         findings: list[Finding] = []
-        query_lower = (query or "").lower().strip()
-        is_cve_query = query_lower.startswith("cve-")
+        query_analysis = query if isinstance(query, QueryAnalysis) else analyze_query(query)
+        specific_cves = [observable for observable in query_analysis.observables if observable.upper().startswith("CVE-")]
 
         critical_keywords = ["critical", "rce", "zero-day", "0day", "actively exploited", "breach"]
         high_keywords = ["high", "vulnerability", "exploit", "apt", "ransomware"]
@@ -128,17 +128,11 @@ class TelegramAgent(BaseAgent):
                 msg_text_raw = msg.get("text", "") or ""
                 msg_text = msg_text_raw.lower()
 
-                # For CVE queries, require an actual CVE ID in the message text.
-                if is_cve_query:
-                    if not CVE_RE.search(msg_text_raw):
+                if specific_cves:
+                    if not any(cve.lower() in msg_text for cve in specific_cves):
                         continue
-                else:
-                    is_relevant = any(word in msg_text for word in query_lower.split()) or channel.get("type") in [
-                        "breach",
-                        "threat_intel",
-                    ]
-                    if not is_relevant:
-                        continue
+                elif query_analysis.match_terms and not query_matches_text(query_analysis, msg_text_raw):
+                    continue
 
                 if any(kw in msg_text for kw in critical_keywords):
                     severity = Severity.CRITICAL
@@ -166,75 +160,18 @@ class TelegramAgent(BaseAgent):
 
         return findings
 
-    def _message_matches_query(self, query: str, text: str) -> bool:
+    def _message_matches_query(self, query: str | QueryAnalysis, text: str) -> bool:
         """Hard filter messages by the user query.
 
         This prevents unrelated summaries when the last N messages don't contain the query.
         """
-        q = (query or "").strip()
-        if not q:
-            return True
-
-        t = text or ""
-        tl = t.lower()
-        ql = q.lower()
-
-        # Specific CVE queries: match specific year if provided, else any CVE pattern.
-        if ql.startswith("cve-"):
-            m = re.match(r"^cve-(\d{4})", ql)
-            if m:
-                year = m.group(1)
-                return re.search(rf"\bCVE-{year}-\d+\b", t, flags=re.IGNORECASE) is not None
-            return CVE_RE.search(t) is not None
-
-        # General CVE / vulnerability queries.
-        if any(
-            term in ql
-            for term in [
-                "cve",
-                "cves",
-                "vulnerability",
-                "vulnerabilities",
-                "exploit",
-                "exploits",
-                "poc",
-                "proof of concept",
-                "weaponization",
-                "weaponized",
-            ]
-        ):
-            return CVE_RE.search(t) is not None or any(
-                term in tl
-                for term in [
-                    "cve",
-                    "vulnerability",
-                    "vulnerabilities",
-                    "cvss",
-                    "rce",
-                    "sql injection",
-                    "xss",
-                    "zero-day",
-                    "zero day",
-                    "0day",
-                    "exploit",
-                    "exploited",
-                    "poc",
-                    "proof of concept",
-                    "weaponized",
-                    "weaponization",
-                ]
-            )
-
-        # 0day queries.
-        if ql in {"0day", "zero day", "zero-day"}:
-            return re.search(r"\b(?:0day|zero[\s-]?day)\b", tl) is not None
-
-        # General substring match.
-        return ql in tl
+        return query_matches_text(query, text)
 
     async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901, PLR0915
         """Process a Telegram intelligence query."""
         self.logger.info("Telegram agent processing: %s", (request.query or "")[:100])
+        query_analysis = analyze_query(request.query)
+        checked_channels = [f"{channel['name']} ({channel['id']})" for channel in self.target_groups]
 
         results: list[dict[str, Any]] = []
 
@@ -271,7 +208,7 @@ class TelegramAgent(BaseAgent):
         else:
             results.extend(self._empty_channel_result(channel, status="not_configured") for channel in self.target_groups)
 
-        findings = await self._analyze_messages(request.query, results)
+        findings = await self._analyze_messages(query_analysis, results)
 
         # Build all_messages without duplication.
         all_messages: list[dict[str, Any]] = []
@@ -289,7 +226,7 @@ class TelegramAgent(BaseAgent):
         )
 
         # Hard-filter the messages by query before LLM summary.
-        matched_messages = [m for m in all_messages if self._message_matches_query(request.query, m.get("text", ""))]
+        matched_messages = [m for m in all_messages if self._message_matches_query(query_analysis, m.get("text", ""))]
 
         # Keep report consistent — if nothing matched, don't return findings either.
         if not matched_messages:
@@ -310,6 +247,7 @@ class TelegramAgent(BaseAgent):
             "### 📱 Telegram Intelligence Report\n",
             f"**Query:** {request.query}\n",
             f"**Channels Monitored:** {len(results)}\n",
+            f"**Checked Telegram Channels:** {', '.join(checked_channels)}\n",
             f"**Messages Analyzed:** {sum(len(r['messages']) for r in results)}\n",
             f"**Relevant Findings:** {len(findings)}\n",
             f"**Query Matches (messages):** {len(matched_messages)}\n\n",
@@ -382,6 +320,8 @@ class TelegramAgent(BaseAgent):
                 "findings_count": len(findings),
                 "monitoring_status": monitoring_status,
                 "query_matches": len(matched_messages),
+                "refined_query": query_analysis.search_query,
+                "checked_channels": checked_channels,
             },
         )
 
