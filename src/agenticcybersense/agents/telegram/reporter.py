@@ -15,14 +15,10 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-import requests  # type: ignore[import-untyped]
-
-from agenticcybersense.settings import settings
+from agenticcybersense.llm import generate_text
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = settings.ollama_model
-OLLAMA_URL = settings.ollama_base_url.rstrip("/") + "/api/generate"
 
 RETRY_COUNT = 3
 RETRY_BACKOFF = 3  # exponential base
@@ -82,30 +78,18 @@ def parse_llm_json_text(llm_text: str) -> tuple[Any | None, str]:
         return obj, "escaped_newlines_then_json.loads"
 
 
-def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
-    """Call local Ollama endpoint with retries and return plain text response."""
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.2},
-    }
-    session = requests.Session()
-    session.trust_env = False
+def call_llm_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
+    """Call configured LLM with retries and return plain text response."""
     last_err: Exception | None = None
 
     for i in range(1, attempts + 1):
         try:
-            resp = session.post(OLLAMA_URL, json=payload, timeout=(10, 3600))
-            resp.raise_for_status()
-            obj = resp.json()
-            text = obj.get("response") or ""
-            return text.strip()
-        except (requests.RequestException, json.JSONDecodeError, KeyError, ValueError) as e:
+            return generate_text(prompt, temperature=0.2)
+        except Exception as e:  # noqa: BLE001
             last_err = e
             sleep = RETRY_BACKOFF**i
             logger.warning(
-                "Warning: Ollama call failed (attempt %d/%d): %s. Retrying in %ds...",
+                "Warning: LLM call failed (attempt %d/%d): %s. Retrying in %ds...",
                 i,
                 attempts,
                 e,
@@ -113,10 +97,10 @@ def call_ollama_with_retries(prompt: str, attempts: int = RETRY_COUNT) -> str:
             )
             time.sleep(sleep)
 
-    # All attempts failed
     if last_err is not None:
         raise last_err
-    msg = "Ollama call failed without an exception"
+
+    msg = "LLM call failed without an exception"
     raise RuntimeError(msg)
 
 
@@ -418,5 +402,5 @@ def summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     prompt = build_prompt_for_rows(rows)
-    llm_text = call_ollama_with_retries(prompt)
+    llm_text = call_llm_with_retries(prompt)
     return sanitize_report(llm_text, rows)

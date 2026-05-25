@@ -5,10 +5,9 @@ import logging
 import warnings
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
+from agenticcybersense.llm import build_chat_llm
 from agenticcybersense.settings import settings
 
 # Suppress deprecation warnings
@@ -19,55 +18,6 @@ logger = logging.getLogger(__name__)
 
 HTTP_TIMEOUT_SECONDS = 60 * 60
 SSE_READ_TIMEOUT_SECONDS = 60 * 60
-OPENAI_API_KEY_MISSING_ERROR = "OPENAI_API_KEY is required when using OpenAI. Set it in your .env file or environment variables."
-
-
-def choose_llm_provider() -> str:
-    """Ask the user which LLM provider to use for this session."""
-    default_provider = (settings.llm_provider or "ollama").lower().strip()
-    default_choice = "2" if default_provider == "openai" else "1"
-
-    prompt_text = (
-        "\nSelect LLM provider:\n"
-        f"1) Local Ollama - {settings.ollama_model}\n"
-        f"2) OpenAI - {settings.openai_model}\n"
-        f"\nPress Enter to use default [{default_choice}].\n"
-        "Choice [1/2]: "
-    )
-
-    while True:
-        choice = input(prompt_text).strip() or default_choice
-
-        if choice == "1":
-            return "ollama"
-        if choice == "2":
-            return "openai"
-
-        logger.warning("Invalid choice. Please enter 1 or 2.")
-
-
-def build_llm(provider: str) -> ChatOllama | ChatOpenAI:
-    """Build the selected LLM client."""
-    provider = provider.lower().strip()
-
-    if provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError(OPENAI_API_KEY_MISSING_ERROR)
-
-        logger.info("Using OpenAI model: %s", settings.openai_model)
-        return ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            temperature=0,
-            timeout=HTTP_TIMEOUT_SECONDS,
-            max_retries=2,
-        )
-
-    logger.info("Using Ollama model: %s", settings.ollama_model)
-    return ChatOllama(
-        model=settings.ollama_model,
-        temperature=0,
-    )
 
 
 async def run_agent() -> None:  # noqa: C901, PLR0915
@@ -79,8 +29,13 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
     )
     logger.info("MCP target URL: %s", getattr(settings, "mcp_target_url", None))
 
-    selected_provider = choose_llm_provider()
-    llm = build_llm(selected_provider)
+    logger.info(
+        "Configured LLM provider: %s | model: %s",
+        settings.normalized_llm_provider(),
+        settings.active_llm_model(),
+    )
+
+    llm = build_chat_llm()
 
     server_config = {
         "agenticcybersense-mcp": {
@@ -100,6 +55,10 @@ async def run_agent() -> None:  # noqa: C901, PLR0915
 
         # 2) System Prompt
         system_prompt = (
+            "IMPORTANT:\n"
+            "When calling ANY tool, ALWAYS pass the user's message as the argument user_input.\n"
+            'For example: {"user_input": "<user\'s prompt>"}.\n'
+            "Do NOT use 'query', 'q', or leave the arguments empty. If you do not pass user_input, the tool will fail.\n\n"
             "You are an intelligent assistant that can use tools when necessary.\n"
             "But rag_search is mandatory as the first tool call for every user request.\n"
             "Never call any tools before rag_search.\n"
