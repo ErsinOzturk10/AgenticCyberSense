@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from agenticcybersense.graph.state import GraphState
 from agenticcybersense.logging_utils import get_logger
+from agenticcybersense.query_analysis import analyze_query, has_threat_intel_intent
 from agenticcybersense.schemas.findings import Finding  # noqa: TC001
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 
@@ -103,10 +104,13 @@ def _determine_pending_agents(query: str) -> list[str]:
     """Determine which agents to consult based on query."""
     agents = []
     query_lower = query.lower()
+    query_analysis = analyze_query(query)
+    has_breach_intent = any(term in query_analysis.intent_terms for term in ("breach", "leak"))
+    has_threat_intent = has_threat_intel_intent(query_analysis)
 
-    if any(word in query_lower for word in ["website", "web", "url", "news", "leak", "breach", "cve"]):
+    if query_analysis.is_observable_lookup or any(word in query_lower for word in ["website", "web", "url", "news", "leak", "breach", "cve"]):
         agents.append("web")
-    if any(word in query_lower for word in ["telegram", "channel", "group", "chat"]):
+    if query_analysis.is_observable_lookup or has_breach_intent or has_threat_intent or any(word in query_lower for word in ["telegram", "channel", "group", "chat"]):
         agents.append("telegram")
 
     # If no specific match, consult all
@@ -182,6 +186,18 @@ async def synthesize_node(state_dict: GraphStateDict) -> GraphStateDict:  # noqa
     parts.append("## 📊 Summary\n\n")
     parts.append(f"- **Agents Consulted:** {', '.join(state.agents_consulted)}\n")
     parts.append(f"- **Total Findings:** {len(state.findings)}\n")
+
+    web_response = state.agent_responses.get("web")
+    if web_response:
+        checked_sources = web_response.metadata.get("checked_sources", [])
+        if isinstance(checked_sources, list) and checked_sources:
+            parts.append(f"- **Web Sources Checked ({len(checked_sources)}):** {', '.join(str(source) for source in checked_sources)}\n")
+
+    telegram_response = state.agent_responses.get("telegram")
+    if telegram_response:
+        checked_channels = telegram_response.metadata.get("checked_channels", [])
+        if isinstance(checked_channels, list) and checked_channels:
+            parts.append(f"- **Telegram Channels Checked ({len(checked_channels)}):** {', '.join(str(channel) for channel in checked_channels)}\n")
 
     if state.findings:
         parts.append("\n### Key Findings:\n")
