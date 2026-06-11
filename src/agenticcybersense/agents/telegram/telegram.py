@@ -30,9 +30,7 @@ class TelegramAgent(BaseAgent):
         {"name": "FalconFeedsIO", "id": "@falconfeedsio", "type": "threat_intel"},
         {"name": "Malpedia", "id": "@malpedia", "type": "malware_intel"},
         {"name": "CVE Feed", "id": "@CVE_Feed", "type": "cve"},
-        
     ]
-
 
     def __init__(self, target_groups: list[dict[str, str]] | None = None, llm: BaseChatModel | None = None) -> None:
         """Initialize the Telegram agent.
