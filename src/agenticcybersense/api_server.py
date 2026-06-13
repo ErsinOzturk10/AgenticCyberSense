@@ -140,20 +140,6 @@ def is_raw_telegram_retrieval_query(query: str) -> bool:
         "raw messages",
         "message content",
         "messages content",
-        "tüm mesaj",
-        "tum mesaj",
-        "bütün mesaj",
-        "butun mesaj",
-        "tüm kanallar",
-        "tum kanallar",
-        "bütün kanallar",
-        "butun kanallar",
-        "mesajların tamamı",
-        "mesajlarin tamami",
-        "tamamını getir",
-        "tamamini getir",
-        "eksiksiz",
-        "eksik olmadan",
     ]
 
     has_telegram_context = any(term in q for term in telegram_terms) or re.search(r"@[\w\d_]+", query or "") is not None

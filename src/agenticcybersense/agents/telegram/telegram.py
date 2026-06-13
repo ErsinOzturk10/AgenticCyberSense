@@ -24,6 +24,8 @@ class TelegramAgent(BaseAgent):
 
     name: str = "telegram"
     description: str = "Monitors Telegram groups and channels for leaked data and threat actor activity"
+    MIN_QUERY_TERM_LENGTH: ClassVar[int] = 3
+    MAX_EMAIL_LOCAL_VISIBLE_CHARS: ClassVar[int] = 2
 
     DEFAULT_CHANNELS: ClassVar[list[dict[str, str]]] = [
         {"name": "vx-underground", "id": "@vxunderground", "type": "threat_intel"},
@@ -74,7 +76,7 @@ class TelegramAgent(BaseAgent):
             "complete messages",
             "entire channel",
             "all channels",
-            "all telegram channels"
+            "all telegram channels",
         ]
 
         return any(phrase in q for phrase in raw_retrieval_phrases)
@@ -107,14 +109,10 @@ class TelegramAgent(BaseAgent):
             "stealer logs",
             "leaked",
             "leak",
-            "compromised"
+            "compromised",
         ]
 
-        telegram_terms = [
-            "telegram",
-            "channel",
-            "channels"
-        ]
+        telegram_terms = ["telegram", "channel", "channels"]
 
         has_credential_intent = any(term in q for term in credential_terms)
         has_telegram_context = any(term in q for term in telegram_terms) or self._extract_requested_channel_id(query) is not None
@@ -200,7 +198,7 @@ class TelegramAgent(BaseAgent):
         return counts
 
     def _mask_email(self, value: str) -> str:
-        """Partially mask an email address."""
+        """Mask an email address while preserving minimal context."""
         value = value.strip()
         if "@" not in value:
             return self._mask_username(value)
@@ -209,10 +207,7 @@ class TelegramAgent(BaseAgent):
         if not local:
             return f"***@{domain}"
 
-        if len(local) <= 2:
-            masked_local = local[0] + "***"
-        else:
-            masked_local = local[:2] + "***"
+        masked_local = local[0] + "***" if len(local) <= self.MAX_EMAIL_LOCAL_VISIBLE_CHARS else local[: self.MAX_EMAIL_LOCAL_VISIBLE_CHARS] + "***"
 
         return f"{masked_local}@{domain}"
 
@@ -276,9 +271,7 @@ class TelegramAgent(BaseAgent):
         redacted = password_field_re.sub(password_field_repl, redacted)
 
         standalone_email_re = re.compile(r"\b[\w.\-+%]+@[\w.\-]+\.[a-zA-Z]{2,}\b")
-        redacted = standalone_email_re.sub(lambda m: self._mask_email(m.group(0)), redacted)
-
-        return redacted
+        return standalone_email_re.sub(lambda m: self._mask_email(m.group(0)), redacted)
 
     def _credential_summary_lines(self, text: str) -> list[str]:
         """Extract masked credential summary lines for a message."""
@@ -290,26 +283,22 @@ class TelegramAgent(BaseAgent):
         pair_re = re.compile(
             r"(?im)^(\s*)([\w.\-+%]+@[\w.\-]+\.[a-zA-Z]{2,}|[\w.\-+%@]{3,})(\s*[:;|]\s*)(\S{4,})(\s*)$",
         )
-        for m in pair_re.finditer(text):
-            lines.append(
-                f"- Username/password pair: {self._mask_identity_value(m.group(2))} : {self._mask_password(m.group(4))}",
-            )
+        lines.extend(
+            [f"- Username/password pair: {self._mask_identity_value(m.group(2))} : {self._mask_password(m.group(4))}" for m in pair_re.finditer(text)],
+        )
 
         email_re = re.compile(r"\b[\w.\-+%]+@[\w.\-]+\.[a-zA-Z]{2,}\b")
-        for m in email_re.finditer(text):
-            lines.append(f"- Email/username-like value: {self._mask_email(m.group(0))}")
+        lines.extend(f"- Email/username-like value: {self._mask_email(m.group(0))}" for m in email_re.finditer(text))
 
         identity_field_re = re.compile(
             r"(?im)\b(?:user(?:name)?|login|email|account)\s*[:=]\s*([^\s,;]+)",
         )
-        for m in identity_field_re.finditer(text):
-            lines.append(f"- Username-like field: {self._mask_identity_value(m.group(1))}")
+        lines.extend(f"- Username-like field: {self._mask_identity_value(m.group(1))}" for m in identity_field_re.finditer(text))
 
         password_field_re = re.compile(
             r"(?im)\b(?:pass(?:word)?|passwd|pwd|pass)\s*[:=]\s*([^\s,;]+)",
         )
-        for m in password_field_re.finditer(text):
-            lines.append(f"- Password-like field: {self._mask_password(m.group(1))}")
+        lines.extend(f"- Password-like field: {self._mask_password(m.group(1))}" for m in password_field_re.finditer(text))
 
         # Keep order but remove duplicates.
         deduped: list[str] = []
@@ -320,6 +309,101 @@ class TelegramAgent(BaseAgent):
                 deduped.append(line)
 
         return deduped
+
+    def _channel_selected_for_credential_check(
+        self,
+        channel: dict[str, str],
+        *,
+        is_credential_investigation: bool,
+        requested_channel_id: str | None,
+    ) -> bool:
+        """Return whether this channel should be considered for credential investigation."""
+        return not (is_credential_investigation and requested_channel_id and channel.get("id", "").lower() != requested_channel_id.lower())
+
+    def _is_message_relevant(
+        self,
+        *,
+        msg: dict[str, Any],
+        msg_text_raw: str,
+        query_terms: list[str],
+        channel_type: str,
+        query_mode: str,
+    ) -> bool:
+        """Determine whether a Telegram message is relevant for the current query mode."""
+        msg_text = msg_text_raw.lower()
+
+        if query_mode == "cve":
+            return bool(CVE_RE.search(msg_text_raw))
+
+        if query_mode == "credential":
+            return self._message_is_credential_match(msg)
+
+        return (
+            query_mode == "raw"
+            or bool(msg.get("matched_keywords"))
+            or any(word in msg_text for word in query_terms)
+            or channel_type in ["breach", "threat_intel", "credential_leak"]
+            or self._looks_like_credential_leak(msg_text_raw)
+        )
+
+    def _determine_message_severity(
+        self,
+        *,
+        msg_text: str,
+        msg_text_raw: str,
+        is_credential_investigation: bool,
+    ) -> Severity:
+        """Assign severity to a message based on indicators and keywords."""
+        critical_keywords = ["critical", "rce", "zero-day", "0day", "actively exploited", "breach"]
+        high_keywords = [
+            "high",
+            "vulnerability",
+            "exploit",
+            "apt",
+            "ransomware",
+            "credential",
+            "credentials",
+            "password",
+            "passwd",
+            "combolist",
+            "stealer log",
+            "stealer logs",
+        ]
+        medium_keywords = ["medium", "phishing", "malware", "suspicious", "username", "login", "account"]
+
+        if is_credential_investigation or self._looks_like_credential_leak(msg_text_raw):
+            return Severity.HIGH
+        if any(kw in msg_text for kw in critical_keywords):
+            return Severity.CRITICAL
+        if any(kw in msg_text for kw in high_keywords):
+            return Severity.HIGH
+        if any(kw in msg_text for kw in medium_keywords):
+            return Severity.MEDIUM
+        return Severity.LOW
+
+    def _build_finding_message_data(
+        self,
+        *,
+        msg: dict[str, Any],
+        msg_text_raw: str,
+        indicators: list[str],
+        is_credential_investigation: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        """Build finding description and raw data with credential-aware masking."""
+        if is_credential_investigation or indicators:
+            masked_text = self._redact_sensitive_credentials(msg_text_raw)
+            return (
+                masked_text[:200],
+                {
+                    **msg,
+                    "text": masked_text,
+                    "text_preview": masked_text[:500].replace("\n", " ") if masked_text else "",
+                    "credential_indicators": indicators,
+                    "credential_summary": self._credential_summary_lines(msg_text_raw),
+                },
+            )
+
+        return (msg_text_raw[:200], msg)
 
     async def _fetch_channel_messages(
         self,
@@ -343,10 +427,7 @@ class TelegramAgent(BaseAgent):
 
             keywords = [s.strip() for s in (settings.telegram_keywords or "").split(",") if s.strip()]
 
-            normalized_messages = [
-                normalize_message(m, channel_username=channel["id"], keywords=keywords)
-                for m in msgs
-            ]
+            normalized_messages = [normalize_message(m, channel_username=channel["id"], keywords=keywords) for m in msgs]
 
             messages = [
                 {
@@ -380,89 +461,50 @@ class TelegramAgent(BaseAgent):
         """Analyze messages for relevant threat intelligence."""
         findings: list[Finding] = []
         query_lower = (query or "").lower().strip()
+        query_terms = [word for word in query_lower.split() if len(word) >= self.MIN_QUERY_TERM_LENGTH]
         is_cve_query = query_lower.startswith("cve-")
         is_raw_retrieval = self._is_raw_channel_retrieval_query(query)
         is_credential_investigation = self._is_credential_investigation_query(query)
         requested_channel_id = self._extract_requested_channel_id(query)
-
-        critical_keywords = ["critical", "rce", "zero-day", "0day", "actively exploited", "breach"]
-        high_keywords = [
-            "high",
-            "vulnerability",
-            "exploit",
-            "apt",
-            "ransomware",
-            "credential",
-            "credentials",
-            "password",
-            "passwd",
-            "combolist",
-            "stealer log",
-            "stealer logs",
-        ]
-        medium_keywords = ["medium", "phishing", "malware", "suspicious", "username", "login", "account"]
+        query_mode = "cve" if is_cve_query else "credential" if is_credential_investigation else "raw" if is_raw_retrieval else "default"
 
         for result in results:
             channel = result["channel"]
             messages = result["messages"]
 
-            if is_credential_investigation and requested_channel_id:
-                if channel.get("id", "").lower() != requested_channel_id.lower():
-                    continue
+            if not self._channel_selected_for_credential_check(
+                channel,
+                is_credential_investigation=is_credential_investigation,
+                requested_channel_id=requested_channel_id,
+            ):
+                continue
 
             for msg in messages:
                 msg_text_raw = msg.get("text", "") or ""
                 msg_text = msg_text_raw.lower()
 
-                if is_cve_query:
-                    if not CVE_RE.search(msg_text_raw):
-                        continue
-                elif is_credential_investigation:
-                    if not self._message_is_credential_match(msg):
-                        continue
-                else:
-                    query_terms = [word for word in query_lower.split() if len(word) >= 3]
-                    is_relevant = (
-                        is_raw_retrieval
-                        or bool(msg.get("matched_keywords"))
-                        or any(word in msg_text for word in query_terms)
-                        or channel.get("type") in [
-                            "breach",
-                            "threat_intel",
-                            "credential_leak",
-                        ]
-                        or self._looks_like_credential_leak(msg_text_raw)
-                    )
+                if not self._is_message_relevant(
+                    msg=msg,
+                    msg_text_raw=msg_text_raw,
+                    query_terms=query_terms,
+                    channel_type=channel.get("type", "unknown"),
+                    query_mode=query_mode,
+                ):
+                    continue
 
-                    if not is_relevant:
-                        continue
-
-                if is_credential_investigation or self._looks_like_credential_leak(msg_text_raw):
-                    severity = Severity.HIGH
-                elif any(kw in msg_text for kw in critical_keywords):
-                    severity = Severity.CRITICAL
-                elif any(kw in msg_text for kw in high_keywords):
-                    severity = Severity.HIGH
-                elif any(kw in msg_text for kw in medium_keywords):
-                    severity = Severity.MEDIUM
-                else:
-                    severity = Severity.LOW
+                severity = self._determine_message_severity(
+                    msg_text=msg_text,
+                    msg_text_raw=msg_text_raw,
+                    is_credential_investigation=is_credential_investigation,
+                )
 
                 indicators = self._credential_indicators(msg_text_raw)
-
-                if is_credential_investigation or indicators:
-                    masked_text = self._redact_sensitive_credentials(msg_text_raw)
-                    finding_description = masked_text[:200]
-                    raw_data_for_finding = {
-                        **msg,
-                        "text": masked_text,
-                        "text_preview": masked_text[:500].replace("\n", " ") if masked_text else "",
-                        "credential_indicators": indicators,
-                        "credential_summary": self._credential_summary_lines(msg_text_raw),
-                    }
-                else:
-                    finding_description = msg_text_raw[:200]
-                    raw_data_for_finding = msg
+                finding_description, raw_data_for_finding = self._build_finding_message_data(
+                    msg=msg,
+                    msg_text_raw=msg_text_raw,
+                    indicators=indicators,
+                    is_credential_investigation=is_credential_investigation,
+                )
 
                 findings.append(
                     Finding(
@@ -495,97 +537,102 @@ class TelegramAgent(BaseAgent):
         tl = t.lower()
         ql = q.lower()
 
+        cve_keywords = [
+            "cve",
+            "cves",
+            "vulnerability",
+            "vulnerabilities",
+            "exploit",
+            "exploits",
+            "poc",
+            "proof of concept",
+            "weaponization",
+            "weaponized",
+        ]
+
+        credential_keywords = [
+            "credential",
+            "credentials",
+            "username",
+            "usernames",
+            "email",
+            "emails",
+            "password",
+            "passwords",
+            "passwd",
+            "pwd",
+            "login",
+            "account",
+            "combolist",
+            "combo list",
+            "stealer log",
+            "stealer logs",
+            "ulp",
+            "leaked credential",
+            "compromised credential",
+        ]
+
+        matches_query = False
+
+        # Check CVE prefix match
         if ql.startswith("cve-"):
             m = re.match(r"^cve-(\d{4})", ql)
             if m:
                 year = m.group(1)
-                return re.search(rf"\bCVE-{year}-\d+\b", t, flags=re.IGNORECASE) is not None
-            return CVE_RE.search(t) is not None
+                matches_query = re.search(rf"\bCVE-{year}-\d+\b", t, flags=re.IGNORECASE) is not None
+            else:
+                matches_query = CVE_RE.search(t) is not None
 
-        if any(
-            term in ql
-            for term in [
+        # Check CVE keywords
+        elif any(term in ql for term in cve_keywords):
+            cve_indicators = [
                 "cve",
-                "cves",
                 "vulnerability",
                 "vulnerabilities",
+                "cvss",
+                "rce",
+                "sql injection",
+                "xss",
+                "zero-day",
+                "zero day",
+                "0day",
                 "exploit",
-                "exploits",
+                "exploited",
                 "poc",
                 "proof of concept",
-                "weaponization",
                 "weaponized",
+                "weaponization",
             ]
-        ):
-            return CVE_RE.search(t) is not None or any(
-                term in tl
-                for term in [
-                    "cve",
-                    "vulnerability",
-                    "vulnerabilities",
-                    "cvss",
-                    "rce",
-                    "sql injection",
-                    "xss",
-                    "zero-day",
-                    "zero day",
-                    "0day",
-                    "exploit",
-                    "exploited",
-                    "poc",
-                    "proof of concept",
-                    "weaponized",
-                    "weaponization",
-                ]
-            )
+            matches_query = CVE_RE.search(t) is not None or any(term in tl for term in cve_indicators)
 
-        if any(
-            term in ql
-            for term in [
+        # Check credential keywords
+        elif any(term in ql for term in credential_keywords):
+            credential_indicators = [
                 "credential",
                 "credentials",
                 "username",
-                "usernames",
                 "email",
-                "emails",
                 "password",
-                "passwords",
                 "passwd",
                 "pwd",
                 "login",
                 "account",
                 "combolist",
-                "combo list",
-                "stealer log",
-                "stealer logs",
+                "combo",
+                "stealer",
                 "ulp",
-                "leaked credential",
-                "compromised credential",
             ]
-        ):
-            return self._looks_like_credential_leak(t) or any(
-                term in tl
-                for term in [
-                    "credential",
-                    "credentials",
-                    "username",
-                    "email",
-                    "password",
-                    "passwd",
-                    "pwd",
-                    "login",
-                    "account",
-                    "combolist",
-                    "combo",
-                    "stealer",
-                    "ulp",
-                ]
-            )
+            matches_query = self._looks_like_credential_leak(t) or any(term in tl for term in credential_indicators)
 
-        if ql in {"0day", "zero day", "zero-day"}:
-            return re.search(r"\b(?:0day|zero[\s-]?day)\b", tl) is not None
+        # Check 0day/zero-day variations
+        elif ql in {"0day", "zero day", "zero-day"}:
+            matches_query = re.search(r"\b(?:0day|zero[\s-]?day)\b", tl) is not None
 
-        return ql in tl
+        # Default text matching
+        else:
+            matches_query = ql in tl
+
+        return matches_query
 
     async def process(self, request: AgentRequest) -> AgentResponse:  # noqa: PLR0912, C901, PLR0915
         """Process a Telegram intelligence query."""
@@ -632,10 +679,7 @@ class TelegramAgent(BaseAgent):
                     for channel in channels_to_fetch
                 )
         else:
-            results.extend(
-                self._empty_channel_result(channel, status="not_configured")
-                for channel in channels_to_fetch
-            )
+            results.extend(self._empty_channel_result(channel, status="not_configured") for channel in channels_to_fetch)
 
         findings = await self._analyze_messages(query, results)
 
@@ -662,23 +706,11 @@ class TelegramAgent(BaseAgent):
             candidate_messages = all_messages
 
             if requested_channel_id:
-                candidate_messages = [
-                    m
-                    for m in candidate_messages
-                    if str(m.get("channel_id", "")).lower() == requested_channel_id.lower()
-                ]
+                candidate_messages = [m for m in candidate_messages if str(m.get("channel_id", "")).lower() == requested_channel_id.lower()]
 
-            matched_messages = [
-                m
-                for m in candidate_messages
-                if self._message_is_credential_match(m)
-            ]
+            matched_messages = [m for m in candidate_messages if self._message_is_credential_match(m)]
         else:
-            matched_messages = [
-                m
-                for m in all_messages
-                if self._message_matches_query(query, m.get("text", ""))
-            ]
+            matched_messages = [m for m in all_messages if self._message_matches_query(query, m.get("text", ""))]
 
         if not matched_messages and not is_raw_retrieval:
             findings = []
@@ -690,8 +722,7 @@ class TelegramAgent(BaseAgent):
             findings = [
                 f
                 for f in findings
-                if str(f.source.metadata.get("channel_id", "")).lower() in matched_channel_ids
-                and f.source.metadata.get("message_id") in matched_ids
+                if str(f.source.metadata.get("channel_id", "")).lower() in matched_channel_ids and f.source.metadata.get("message_id") in matched_ids
             ]
 
         llm_report: dict[str, Any] = {}
@@ -732,97 +763,94 @@ class TelegramAgent(BaseAgent):
                 )
             else:
                 response_parts.append("No messages matched the query in the last fetch window.\n")
-        else:
-            if is_raw_retrieval:
-                if requested_channel_id:
-                    response_parts.append(
-                        f"Raw retrieval requested. Mentioned channel: **{requested_channel_id}**. "
-                        "Returning messages from **all configured Telegram channels**.\n\n",
-                    )
-                else:
-                    response_parts.append(
-                        "Raw retrieval requested. Returning messages from **all configured Telegram channels**.\n\n",
-                    )
-
-                for idx, msg in enumerate(matched_messages, start=1):
-                    display_text = msg.get("text") or ""
-                    if self._looks_like_credential_leak(display_text):
-                        display_text = self._redact_sensitive_credentials(display_text)
-
-                    response_parts.append(f"**Message {idx}**\n")
-                    response_parts.append(f"- **Channel:** {msg.get('channel')} ({msg.get('channel_id')})\n")
-                    response_parts.append(f"- **Date:** {msg.get('date') or 'N/A'}\n")
-                    response_parts.append(f"- **URL:** {msg.get('message_url') or 'N/A'}\n")
-                    response_parts.append(f"- **Matched Keywords:** {', '.join(msg.get('matched_keywords') or []) or 'None'}\n")
-                    response_parts.append("```text\n")
-                    response_parts.append(display_text.strip())
-                    response_parts.append("\n```\n\n")
-
-            elif is_credential_investigation:
-                target = requested_channel_id or "configured Telegram channels"
-                indicator_counts = self._credential_indicator_counts(matched_messages)
-
+        elif is_raw_retrieval:
+            if requested_channel_id:
                 response_parts.append(
-                    f"**Credential Leak Investigation Result:** Yes. "
-                    f"Username/password-like credential content was detected for **{target}**.\n\n",
+                    f"Raw retrieval requested. Mentioned channel: **{requested_channel_id}**. "
+                    "Returning messages from **all configured Telegram channels**.\n\n",
                 )
-
-                response_parts.append("**Detected Indicator Summary:**\n")
-                response_parts.append(f"- Email/username-like values: {indicator_counts.get('email_or_username', 0)}\n")
-                response_parts.append(f"- Username fields: {indicator_counts.get('username_field', 0)}\n")
-                response_parts.append(f"- Password fields: {indicator_counts.get('password_field', 0)}\n")
-                response_parts.append(f"- Username/password pair lines: {indicator_counts.get('username_password_pair', 0)}\n")
-                response_parts.append(f"- Stealer-log style entries: {indicator_counts.get('stealer_log_style_entry', 0)}\n\n")
-
-                response_parts.append(
-                    "Credential values are partially masked or redacted in the UI.\n\n",
-                )
-
-                for idx, msg in enumerate(matched_messages, start=1):
-                    raw_text = msg.get("text", "") or ""
-                    indicators = self._credential_indicators(raw_text)
-                    summary_lines = self._credential_summary_lines(raw_text)
-                    display_text = self._redact_sensitive_credentials(raw_text)
-
-                    response_parts.append(f"**Credential Evidence {idx}**\n")
-                    response_parts.append(f"- **Channel:** {msg.get('channel')} ({msg.get('channel_id')})\n")
-                    response_parts.append(f"- **Date:** {msg.get('date') or 'N/A'}\n")
-                    response_parts.append(f"- **URL:** {msg.get('message_url') or 'N/A'}\n")
-                    response_parts.append(f"- **Indicators:** {', '.join(indicators) or 'credential-like content'}\n")
-                    response_parts.append(f"- **Matched Keywords:** {', '.join(msg.get('matched_keywords') or []) or 'None'}\n")
-
-                    if summary_lines:
-                        response_parts.append("- **Masked Extracted Values:**\n")
-                        for line in summary_lines:
-                            response_parts.append(f"  {line}\n")
-
-                    response_parts.append("```text\n")
-                    response_parts.append(display_text.strip())
-                    response_parts.append("\n```\n\n")
-
             else:
-                if llm_report and llm_report.get("findings"):
-                    response_parts.append("\n**🤖 LLM Analysis:**\n")
-                    for f in llm_report["findings"]:
-                        severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.get("severity", ""), "⚪")
-                        response_parts.append(f"{severity_emoji} **{f.get('title', 'N/A')}**\n")
-                        response_parts.append(f"   - **Why it matters:** {f.get('why_it_matters', 'N/A')}\n")
-                        response_parts.append(f"   - **CVE:** {f.get('cve') or 'N/A'}\n")
-                        response_parts.append(f"   - **Exploit Status:** {f.get('exploit_status', 'unknown')}\n\n")
+                response_parts.append(
+                    "Raw retrieval requested. Returning messages from **all configured Telegram channels**.\n\n",
+                )
 
-                if findings:
-                    for finding in findings[:5]:
-                        emoji = {
-                            "critical": "🔴",
-                            "high": "🟠",
-                            "medium": "🟡",
-                            "low": "🟢",
-                            "info": "🔵",
-                        }.get(finding.severity.value, "⚪")
-                        response_parts.append(f"{emoji} **[{finding.severity.value.upper()}]** {finding.title}\n")
-                        response_parts.append(f"   {finding.description[:100]}...\n\n")
-                else:
-                    response_parts.append("No specific threats matching your query were found in monitored channels.\n")
+            for idx, msg in enumerate(matched_messages, start=1):
+                display_text = msg.get("text") or ""
+                if self._looks_like_credential_leak(display_text):
+                    display_text = self._redact_sensitive_credentials(display_text)
+
+                response_parts.append(f"**Message {idx}**\n")
+                response_parts.append(f"- **Channel:** {msg.get('channel')} ({msg.get('channel_id')})\n")
+                response_parts.append(f"- **Date:** {msg.get('date') or 'N/A'}\n")
+                response_parts.append(f"- **URL:** {msg.get('message_url') or 'N/A'}\n")
+                response_parts.append(f"- **Matched Keywords:** {', '.join(msg.get('matched_keywords') or []) or 'None'}\n")
+                response_parts.append("```text\n")
+                response_parts.append(display_text.strip())
+                response_parts.append("\n```\n\n")
+
+        elif is_credential_investigation:
+            target = requested_channel_id or "configured Telegram channels"
+            indicator_counts = self._credential_indicator_counts(matched_messages)
+
+            response_parts.append(
+                f"**Credential Leak Investigation Result:** Yes. Username/password-like credential content was detected for **{target}**.\n\n",
+            )
+
+            response_parts.append("**Detected Indicator Summary:**\n")
+            response_parts.append(f"- Email/username-like values: {indicator_counts.get('email_or_username', 0)}\n")
+            response_parts.append(f"- Username fields: {indicator_counts.get('username_field', 0)}\n")
+            response_parts.append(f"- Password fields: {indicator_counts.get('password_field', 0)}\n")
+            response_parts.append(f"- Username/password pair lines: {indicator_counts.get('username_password_pair', 0)}\n")
+            response_parts.append(f"- Stealer-log style entries: {indicator_counts.get('stealer_log_style_entry', 0)}\n\n")
+
+            response_parts.append(
+                "Credential values are partially masked or redacted in the UI.\n\n",
+            )
+
+            for idx, msg in enumerate(matched_messages, start=1):
+                raw_text = msg.get("text", "") or ""
+                indicators = self._credential_indicators(raw_text)
+                summary_lines = self._credential_summary_lines(raw_text)
+                display_text = self._redact_sensitive_credentials(raw_text)
+
+                response_parts.append(f"**Credential Evidence {idx}**\n")
+                response_parts.append(f"- **Channel:** {msg.get('channel')} ({msg.get('channel_id')})\n")
+                response_parts.append(f"- **Date:** {msg.get('date') or 'N/A'}\n")
+                response_parts.append(f"- **URL:** {msg.get('message_url') or 'N/A'}\n")
+                response_parts.append(f"- **Indicators:** {', '.join(indicators) or 'credential-like content'}\n")
+                response_parts.append(f"- **Matched Keywords:** {', '.join(msg.get('matched_keywords') or []) or 'None'}\n")
+
+                if summary_lines:
+                    response_parts.append("- **Masked Extracted Values:**\n")
+                    response_parts.extend(f"  {line}\n" for line in summary_lines)
+
+                response_parts.append("```text\n")
+                response_parts.append(display_text.strip())
+                response_parts.append("\n```\n\n")
+
+        else:
+            if llm_report and llm_report.get("findings"):
+                response_parts.append("\n**🤖 LLM Analysis:**\n")
+                for f in llm_report["findings"]:
+                    severity_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(f.get("severity", ""), "⚪")
+                    response_parts.append(f"{severity_emoji} **{f.get('title', 'N/A')}**\n")
+                    response_parts.append(f"   - **Why it matters:** {f.get('why_it_matters', 'N/A')}\n")
+                    response_parts.append(f"   - **CVE:** {f.get('cve') or 'N/A'}\n")
+                    response_parts.append(f"   - **Exploit Status:** {f.get('exploit_status', 'unknown')}\n\n")
+
+            if findings:
+                for finding in findings[:5]:
+                    emoji = {
+                        "critical": "🔴",
+                        "high": "🟠",
+                        "medium": "🟡",
+                        "low": "🟢",
+                        "info": "🔵",
+                    }.get(finding.severity.value, "⚪")
+                    response_parts.append(f"{emoji} **[{finding.severity.value.upper()}]** {finding.title}\n")
+                    response_parts.append(f"   {finding.description[:100]}...\n\n")
+            else:
+                response_parts.append("No specific threats matching your query were found in monitored channels.\n")
 
         has_messages = any(len(r.get("messages", [])) > 0 for r in results)
         has_fetch_failures = any(r.get("status") in {"fetch_failed", "client_unavailable"} for r in results)
