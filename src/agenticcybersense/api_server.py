@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -36,13 +37,14 @@ STREAM_CHUNK_SIZE = 20
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler — runs on startup and shutdown."""
     global _graph  # noqa: PLW0603
+
     setup_logging(settings.log_level)
     logger.info("=" * 60)
     logger.info("Starting AgenticCyberSense API Server")
     logger.info("Port: %s", settings.api_port)
     logger.info("=" * 60)
 
-    # Initialize RAG vector store so DocumentationAgent can retrieve documents
+    # Initialize RAG vector store so DocumentationAgent can retrieve documents.
     try:
         from agenticcybersense.rag.rag import initialize_rag  # noqa: PLC0415
 
@@ -51,7 +53,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.exception("RAG initialization failed (documentation agent will be limited)")
 
-    # Build the LangGraph orchestration graph
+    # Build the LangGraph orchestration graph.
     try:
         from agenticcybersense.graph.build_graph import build_graph  # noqa: PLC0415
 
@@ -61,8 +63,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         logger.exception("Failed to initialize graph")
         _graph = None
 
-    # Start the webcrawler scheduler — runs daily at 02:00
-    # Set run_on_startup=True to trigger an immediate crawl when the server starts
+    # Start the webcrawler scheduler.
     try:
         from agenticcybersense.web_crawler.crawler_scheduler import start_scheduler  # noqa: PLC0415
 
@@ -74,7 +75,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        # Stop the scheduler gracefully on shutdown
         try:
             from agenticcybersense.web_crawler.crawler_scheduler import stop_scheduler  # noqa: PLC0415
 
@@ -95,7 +95,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Allow all origins so OpenWebUI (running in Docker) can reach this server
+# Allow all origins so OpenWebUI running in Docker can reach this server.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -105,12 +105,86 @@ app.add_middleware(
 )
 
 
+def is_raw_telegram_retrieval_query(query: str) -> bool:
+    """Detect user requests that should bypass orchestration and return raw Telegram output.
+
+    These requests are not asking for a synthesized CTI report. They are asking
+    for the actual Telegram messages, so passing them through the orchestrator may
+    summarize or truncate the output.
+    """
+    q = (query or "").lower().strip()
+    if not q:
+        return False
+
+    telegram_terms = [
+        "telegram",
+        "channel",
+        "channels",
+        "kanal",
+        "kanallar",
+    ]
+
+    raw_retrieval_terms = [
+        "all messages",
+        "retrieve all",
+        "get all messages",
+        "fetch all messages",
+        "without any missing",
+        "without missing",
+        "no missing parts",
+        "full messages",
+        "complete messages",
+        "entire channel",
+        "all channels",
+        "all telegram channels",
+        "raw messages",
+        "message content",
+        "messages content",
+        "tüm mesaj",
+        "tum mesaj",
+        "bütün mesaj",
+        "butun mesaj",
+        "tüm kanallar",
+        "tum kanallar",
+        "bütün kanallar",
+        "butun kanallar",
+        "mesajların tamamı",
+        "mesajlarin tamami",
+        "tamamını getir",
+        "tamamini getir",
+        "eksiksiz",
+        "eksik olmadan",
+    ]
+
+    has_telegram_context = any(term in q for term in telegram_terms) or re.search(r"@[\w\d_]+", query or "") is not None
+    has_raw_retrieval_intent = any(term in q for term in raw_retrieval_terms)
+
+    return has_telegram_context and has_raw_retrieval_intent
+
+
+async def process_raw_telegram_query(query: str) -> str:
+    """Run TelegramAgent directly and return its raw report without final graph synthesis."""
+    from agenticcybersense.agents.telegram.telegram import TelegramAgent  # noqa: PLC0415
+    from agenticcybersense.schemas.messages import AgentRequest  # noqa: PLC0415
+
+    logger.info("Direct raw Telegram retrieval mode enabled")
+    agent = TelegramAgent()
+    response = await agent.process(AgentRequest(query=query))
+
+    content = response.content or ""
+    if not content.strip():
+        return "Telegram agent returned an empty response."
+
+    return content
+
+
 async def process_with_agents(query: str, conversation_id: str, context: dict[str, Any] | None = None) -> str:
     """Route a query through the agent orchestration graph and return the final response."""
     if _graph is None:
         return "Orchestration graph not available"
 
     final_response = "Processing complete."
+
     try:
         initial_state = {
             "query": query,
@@ -144,6 +218,19 @@ async def process_with_agents(query: str, conversation_id: str, context: dict[st
         raise
 
     return final_response
+
+
+async def generate_response_content(user_message: str, conversation_id: str) -> str:
+    """Generate response content for OpenAI-compatible chat completion.
+
+    Raw Telegram retrieval requests bypass the orchestration graph so the output
+    is not summarized, sampled, or transformed into a synthesized CTI report.
+    All other requests continue to use the normal multi-agent graph.
+    """
+    if is_raw_telegram_retrieval_query(user_message):
+        return await process_raw_telegram_query(user_message)
+
+    return await process_with_agents(user_message, conversation_id)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +273,7 @@ async def list_models() -> dict[str, Any]:
 async def chat_completions(request: Request) -> Response:
     """OpenAI-compatible chat completions endpoint.
 
-    Supports both streaming (SSE) and non-streaming responses.
+    Supports both streaming SSE and non-streaming responses.
     """
     logger.info("=" * 40)
     logger.info("POST /v1/chat/completions called")
@@ -202,7 +289,7 @@ async def chat_completions(request: Request) -> Response:
                 content={"error": {"message": "No messages provided", "type": "invalid_request_error"}},
             )
 
-        # Extract the last user message from the conversation history
+        # Extract the last user message from the conversation history.
         user_message = ""
         for msg in reversed(messages):
             if isinstance(msg, dict) and msg.get("role") == "user":
@@ -217,7 +304,7 @@ async def chat_completions(request: Request) -> Response:
                 content={"error": {"message": "No user message found", "type": "invalid_request_error"}},
             )
 
-        stream = body.get("stream", False)
+        stream = bool(body.get("stream", False))
         model = body.get("model", "agenticcybersense")
         conversation_id = str(uuid.uuid4())
 
@@ -227,7 +314,7 @@ async def chat_completions(request: Request) -> Response:
             settings.active_llm_model(),
         )
 
-        response_content = await process_with_agents(user_message, conversation_id)
+        response_content = await generate_response_content(user_message, conversation_id)
         logger.info("Response generated: %d chars", len(response_content))
 
         # --- Streaming response ---
@@ -237,7 +324,7 @@ async def chat_completions(request: Request) -> Response:
                 chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
                 created = int(datetime.now(UTC).timestamp())
 
-                # Send response content in small chunks to simulate streaming
+                # Send response content in small chunks to simulate streaming.
                 for i in range(0, len(response_content), STREAM_CHUNK_SIZE):
                     chunk_text = response_content[i : i + STREAM_CHUNK_SIZE]
                     chunk_data = {
@@ -249,7 +336,6 @@ async def chat_completions(request: Request) -> Response:
                     }
                     yield f"data: {json.dumps(chunk_data)}\n\n"
 
-                # Final chunk signals end of stream
                 final_data = {
                     "id": chunk_id,
                     "object": "chat.completion.chunk",
