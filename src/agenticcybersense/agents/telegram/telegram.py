@@ -10,6 +10,7 @@ from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
 from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
+from agenticcybersense.agents.telegram.telegram_channels import TELEGRAM_CHANNELS
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
@@ -27,18 +28,10 @@ class TelegramAgent(BaseAgent):
     MIN_QUERY_TERM_LENGTH: ClassVar[int] = 3
     MAX_EMAIL_LOCAL_VISIBLE_CHARS: ClassVar[int] = 2
 
-    DEFAULT_CHANNELS: ClassVar[list[dict[str, str]]] = [
-        {"name": "vx-underground", "id": "@vxunderground", "type": "threat_intel"},
-        {"name": "FalconFeedsIO", "id": "@falconfeedsio", "type": "threat_intel"},
-        {"name": "Malpedia", "id": "@malpedia", "type": "malware_intel"},
-        {"name": "CVE Feed", "id": "@CVE_Feed", "type": "cve"},
-        {"name": "Credential Leak Channel", "id": "@AgentTestEu", "type": "credential_leak"},
-    ]
-
-    def __init__(self, target_groups: list[dict[str, str]] | None = None, llm: BaseChatModel | None = None) -> None:
+    def __init__(self, llm: BaseChatModel | None = None) -> None:
         """Initialize the Telegram agent."""
         super().__init__(llm=llm)
-        self.target_groups = target_groups or self.DEFAULT_CHANNELS
+        self.target_groups = TELEGRAM_CHANNELS
 
     def _empty_channel_result(
         self,
