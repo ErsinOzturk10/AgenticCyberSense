@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001, BLE001
 """API-based data collector for cybersecurity threat intelligence.
 
 Collects data from public APIs (no API key required for initial sources)
@@ -55,24 +56,26 @@ def _make_site(pages: list[dict], duration_seconds: int = 0) -> dict:
     }
 
 
-def _safe_get(url: str, **kwargs) -> requests.Response | None:
+def _safe_get(url: str, **kwargs: object) -> requests.Response | None:
     try:
-        r = requests.get(url, timeout=30, **kwargs)
+        r = requests.get(url, timeout=30, **kwargs)  # type: ignore[arg-type]
         r.raise_for_status()
-        return r
-    except Exception as exc:
-        logger.error("GET %s failed: %s", url, exc)
+    except Exception:
+        logger.exception("GET %s failed", url)
         return None
+    else:
+        return r
 
 
-def _safe_post(url: str, **kwargs) -> requests.Response | None:
+def _safe_post(url: str, **kwargs: object) -> requests.Response | None:
     try:
-        r = requests.post(url, timeout=30, **kwargs)
+        r = requests.post(url, timeout=30, **kwargs)  # type: ignore[arg-type]
         r.raise_for_status()
-        return r
-    except Exception as exc:
-        logger.error("POST %s failed: %s", url, exc)
+    except Exception:
+        logger.exception("POST %s failed", url)
         return None
+    else:
+        return r
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +121,7 @@ def collect_mitre_attack() -> tuple[str, dict]:
     """MITRE ATT&CK — enterprise techniques via TAXII."""
     logger.info("📡 MITRE ATT&CK Techniques başlatıldı...")
     try:
-        from attackcti import attack_client
+        from attackcti import attack_client  # noqa: PLC0415
         lift = attack_client()
         techniques = lift.get_enterprise_techniques()
         pages = []
@@ -156,8 +159,8 @@ def collect_mitre_attack() -> tuple[str, dict]:
     except ImportError:
         logger.warning("⚠️ attackcti yüklü değil: pip install attackcti")
         return "https://attack.mitre.org/", _make_site([])
-    except Exception as exc:
-        logger.error("❌ MITRE ATT&CK Techniques hatası: %s", exc)
+    except Exception:
+        logger.exception("❌ MITRE ATT&CK Techniques hatası")
         return "https://attack.mitre.org/", _make_site([])
 
 
@@ -165,7 +168,7 @@ def collect_mitre_groups() -> tuple[str, dict]:
     """MITRE ATT&CK — threat actor groups via TAXII."""
     logger.info("📡 MITRE ATT&CK Groups başlatıldı...")
     try:
-        from attackcti import attack_client
+        from attackcti import attack_client  # noqa: PLC0415
         lift = attack_client()
         groups = lift.get_groups()
         pages = []
@@ -198,8 +201,8 @@ def collect_mitre_groups() -> tuple[str, dict]:
     except ImportError:
         logger.warning("⚠️ attackcti yüklü değil: pip install attackcti")
         return "https://attack.mitre.org/versions/v18/groups/", _make_site([])
-    except Exception as exc:
-        logger.error("❌ MITRE ATT&CK Groups hatası: %s", exc)
+    except Exception:
+        logger.exception("❌ MITRE ATT&CK Groups hatası")
         return "https://attack.mitre.org/versions/v18/groups/", _make_site([])
 
 
@@ -207,7 +210,7 @@ def collect_mitre_software() -> tuple[str, dict]:
     """MITRE ATT&CK — malware and tools via TAXII."""
     logger.info("📡 MITRE ATT&CK Software başlatıldı...")
     try:
-        from attackcti import attack_client
+        from attackcti import attack_client  # noqa: PLC0415
         lift = attack_client()
         software_list = lift.get_software()
         pages = []
@@ -241,8 +244,8 @@ def collect_mitre_software() -> tuple[str, dict]:
     except ImportError:
         logger.warning("⚠️ attackcti yüklü değil: pip install attackcti")
         return "https://attack.mitre.org/versions/v18/software/", _make_site([])
-    except Exception as exc:
-        logger.error("❌ MITRE ATT&CK Software hatası: %s", exc)
+    except Exception:
+        logger.exception("❌ MITRE ATT&CK Software hatası")
         return "https://attack.mitre.org/versions/v18/software/", _make_site([])
 
 
@@ -250,7 +253,7 @@ def collect_mitre_campaigns() -> tuple[str, dict]:
     """MITRE ATT&CK — campaigns via TAXII."""
     logger.info("📡 MITRE ATT&CK Campaigns başlatıldı...")
     try:
-        from attackcti import attack_client
+        from attackcti import attack_client  # noqa: PLC0415
         lift = attack_client()
         campaigns = lift.get_campaigns()
         pages = []
@@ -283,8 +286,8 @@ def collect_mitre_campaigns() -> tuple[str, dict]:
     except ImportError:
         logger.warning("⚠️ attackcti yüklü değil: pip install attackcti")
         return "https://attack.mitre.org/versions/v18/campaigns/", _make_site([])
-    except Exception as exc:
-        logger.error("❌ MITRE ATT&CK Campaigns hatası: %s", exc)
+    except Exception:
+        logger.exception("❌ MITRE ATT&CK Campaigns hatası")
         return "https://attack.mitre.org/versions/v18/campaigns/", _make_site([])
 
 
@@ -316,6 +319,7 @@ def collect_github_repos() -> tuple[str, dict]:
         try:
             readme_text = base64.b64decode(encoded).decode("utf-8", errors="ignore")
         except Exception:
+            logger.warning("  ⚠️ README decode hatası: %s/%s", owner, repo)
             continue
 
         pages.append(_make_page(
@@ -396,13 +400,14 @@ COLLECTORS = [
 
 
 def run() -> None:
+    """Run all collectors, save results to disk, and ingest into ChromaDB."""
     logger.info("=" * 60)
     logger.info("🚀 API Collector başlatıldı")
     logger.info("=" * 60)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     if OUTPUT_FILE.exists():
-        with open(OUTPUT_FILE, encoding="utf-8") as f:
+        with OUTPUT_FILE.open(encoding="utf-8") as f:
             all_results = json.load(f)
         logger.info("📂 Mevcut kayıt: %d kaynak", len(all_results))
     else:
@@ -413,10 +418,10 @@ def run() -> None:
             key, site_data = collector()
             all_results[key] = site_data
             logger.info("💾 Kaydedildi: %s (%d sayfa)", key, site_data["total_pages"])
-        except Exception as exc:
-            logger.error("❌ Collector hatası (%s): %s", collector.__name__, exc)
+        except Exception:
+            logger.exception("❌ Collector hatası (%s)", collector.__name__)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    with OUTPUT_FILE.open("w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False)
 
     total_pages = sum(v["total_pages"] for v in all_results.values())
@@ -428,19 +433,19 @@ def run() -> None:
 
     logger.info("=" * 60)
     logger.info("📊 ÖZET")
-    logger.info("   Kaynak sayısı  : %d", len(all_results))
+    logger.info("   Kaynak sayisi  : %d", len(all_results))
     logger.info("   Toplam sayfa   : %d", total_pages)
     logger.info("   Toplam karakter: %s", f"{total_chars:,}")
-    logger.info("   Çıktı          : %s", OUTPUT_FILE)
+    logger.info("   Cikti          : %s", OUTPUT_FILE)
     logger.info("=" * 60)
 
-    logger.info("\nRAG indeksi güncelleniyor...")
+    logger.info("\nRAG indeksi guncelleniyor...")
     try:
-        from agenticcybersense.web_crawler.rag_ingest import ingest_crawler_json
+        from agenticcybersense.web_crawler.rag_ingest import ingest_crawler_json  # noqa: PLC0415
         rag_stats = ingest_crawler_json(str(OUTPUT_FILE))
-        logger.info("✅ RAG indeksi güncellendi: %s", rag_stats)
+        logger.info("RAG indeksi guncellendi: %s", rag_stats)
     except Exception:
-        logger.exception("RAG ingest başarısız — veriler diske kaydedildi")
+        logger.exception("RAG ingest basarisiz — veriler diske kaydedildi")
 
 
 if __name__ == "__main__":
