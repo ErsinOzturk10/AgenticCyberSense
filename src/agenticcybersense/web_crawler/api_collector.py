@@ -25,6 +25,7 @@ OUTPUT_FILE = Path(__file__).parent / "output" / "api_results.json"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_page(url: str, content: str, title: str = "", links: list[str] | None = None) -> dict:
     """Create a page dict with the same schema as latest_results.json."""
     return {
@@ -82,6 +83,7 @@ def _safe_post(url: str, **kwargs: object) -> requests.Response | None:
 # Collectors
 # ---------------------------------------------------------------------------
 
+
 def collect_cisa_kev() -> tuple[str, dict]:
     """CISA KEV — known exploited vulnerabilities, no API key needed."""
     logger.info("📡 CISA KEV başlatıldı...")
@@ -107,11 +109,13 @@ def collect_cisa_kev() -> tuple[str, dict]:
             f"Date Added: {vuln.get('dateAdded', '')}\n"
             f"Required Action: {vuln.get('requiredAction', '')}\n"
         )
-        pages.append(_make_page(
-            url=f"https://www.cisa.gov/known-exploited-vulnerabilities-#{vuln.get('cveID', '')}",
-            content=content,
-            title=vuln.get("vulnerabilityName", ""),
-        ))
+        pages.append(
+            _make_page(
+                url=f"https://www.cisa.gov/known-exploited-vulnerabilities-#{vuln.get('cveID', '')}",
+                content=content,
+                title=vuln.get("vulnerabilityName", ""),
+            )
+        )
 
     logger.info("✅ CISA KEV tamamlandı: %d sayfa", len(pages))
     return "https://www.cisa.gov/known-exploited-vulnerabilities-", _make_site(pages)
@@ -122,6 +126,7 @@ def collect_mitre_attack() -> tuple[str, dict]:
     logger.info("📡 MITRE ATT&CK Techniques başlatıldı...")
     try:
         from attackcti import attack_client  # noqa: PLC0415
+
         lift = attack_client()
         techniques = lift.get_enterprise_techniques()
         pages = []
@@ -140,18 +145,14 @@ def collect_mitre_attack() -> tuple[str, dict]:
             if kill_chain:
                 tactic = kill_chain[0].get("phase_name", "")
 
-            content = (
-                f"Technique ID: {tid}\n"
-                f"Name: {name}\n"
-                f"Tactic: {tactic}\n"
-                f"Description: {desc}\n"
-                f"Platforms: {', '.join(t.get('x_mitre_platforms', []))}\n"
+            content = f"Technique ID: {tid}\nName: {name}\nTactic: {tactic}\nDescription: {desc}\nPlatforms: {', '.join(t.get('x_mitre_platforms', []))}\n"
+            pages.append(
+                _make_page(
+                    url=f"https://attack.mitre.org/techniques/{tid}/",
+                    content=content,
+                    title=f"{tid} — {name}",
+                )
             )
-            pages.append(_make_page(
-                url=f"https://attack.mitre.org/techniques/{tid}/",
-                content=content,
-                title=f"{tid} — {name}",
-            ))
 
         logger.info("✅ MITRE ATT&CK Techniques: %d teknik", len(pages))
         return "https://attack.mitre.org/", _make_site(pages)
@@ -169,6 +170,7 @@ def collect_mitre_groups() -> tuple[str, dict]:
     logger.info("📡 MITRE ATT&CK Groups başlatıldı...")
     try:
         from attackcti import attack_client  # noqa: PLC0415
+
         lift = attack_client()
         groups = lift.get_groups()
         pages = []
@@ -183,17 +185,14 @@ def collect_mitre_groups() -> tuple[str, dict]:
                 if ref.get("source_name") == "mitre-attack":
                     gid = ref.get("external_id", "")
 
-            content = (
-                f"Group ID: {gid}\n"
-                f"Name: {name}\n"
-                f"Aliases: {', '.join(aliases)}\n"
-                f"Description: {desc}\n"
+            content = f"Group ID: {gid}\nName: {name}\nAliases: {', '.join(aliases)}\nDescription: {desc}\n"
+            pages.append(
+                _make_page(
+                    url=f"https://attack.mitre.org/groups/{gid}/",
+                    content=content,
+                    title=f"{gid} — {name}",
+                )
             )
-            pages.append(_make_page(
-                url=f"https://attack.mitre.org/groups/{gid}/",
-                content=content,
-                title=f"{gid} — {name}",
-            ))
 
         logger.info("✅ MITRE ATT&CK Groups: %d grup", len(pages))
         return "https://attack.mitre.org/versions/v18/groups/", _make_site(pages)
@@ -211,6 +210,7 @@ def collect_mitre_software() -> tuple[str, dict]:
     logger.info("📡 MITRE ATT&CK Software başlatıldı...")
     try:
         from attackcti import attack_client  # noqa: PLC0415
+
         lift = attack_client()
         software_list = lift.get_software()
         pages = []
@@ -225,18 +225,14 @@ def collect_mitre_software() -> tuple[str, dict]:
                 if ref.get("source_name") == "mitre-attack":
                     sid = ref.get("external_id", "")
 
-            content = (
-                f"Software ID: {sid}\n"
-                f"Name: {name}\n"
-                f"Type: {sw_type}\n"
-                f"Platforms: {', '.join(s.get('x_mitre_platforms', []))}\n"
-                f"Description: {desc}\n"
+            content = f"Software ID: {sid}\nName: {name}\nType: {sw_type}\nPlatforms: {', '.join(s.get('x_mitre_platforms', []))}\nDescription: {desc}\n"
+            pages.append(
+                _make_page(
+                    url=f"https://attack.mitre.org/software/{sid}/",
+                    content=content,
+                    title=f"{sid} — {name}",
+                )
             )
-            pages.append(_make_page(
-                url=f"https://attack.mitre.org/software/{sid}/",
-                content=content,
-                title=f"{sid} — {name}",
-            ))
 
         logger.info("✅ MITRE ATT&CK Software: %d yazılım", len(pages))
         return "https://attack.mitre.org/versions/v18/software/", _make_site(pages)
@@ -254,6 +250,7 @@ def collect_mitre_campaigns() -> tuple[str, dict]:
     logger.info("📡 MITRE ATT&CK Campaigns başlatıldı...")
     try:
         from attackcti import attack_client  # noqa: PLC0415
+
         lift = attack_client()
         campaigns = lift.get_campaigns()
         pages = []
@@ -268,17 +265,14 @@ def collect_mitre_campaigns() -> tuple[str, dict]:
                 if ref.get("source_name") == "mitre-attack":
                     cid = ref.get("external_id", "")
 
-            content = (
-                f"Campaign ID: {cid}\n"
-                f"Name: {name}\n"
-                f"First Seen: {first_seen}\n"
-                f"Description: {desc}\n"
+            content = f"Campaign ID: {cid}\nName: {name}\nFirst Seen: {first_seen}\nDescription: {desc}\n"
+            pages.append(
+                _make_page(
+                    url=f"https://attack.mitre.org/campaigns/{cid}/",
+                    content=content,
+                    title=f"{cid} — {name}",
+                )
             )
-            pages.append(_make_page(
-                url=f"https://attack.mitre.org/campaigns/{cid}/",
-                content=content,
-                title=f"{cid} — {name}",
-            ))
 
         logger.info("✅ MITRE ATT&CK Campaigns: %d kampanya", len(pages))
         return "https://attack.mitre.org/versions/v18/campaigns/", _make_site(pages)
@@ -322,11 +316,13 @@ def collect_github_repos() -> tuple[str, dict]:
             logger.warning("  ⚠️ README decode hatası: %s/%s", owner, repo)
             continue
 
-        pages.append(_make_page(
-            url=source_url,
-            content=readme_text[:50000],
-            title=f"GitHub: {owner}/{repo}",
-        ))
+        pages.append(
+            _make_page(
+                url=source_url,
+                content=readme_text[:50000],
+                title=f"GitHub: {owner}/{repo}",
+            )
+        )
         logger.info("  ✅ %s/%s: %d karakter", owner, repo, len(readme_text))
 
     logger.info("✅ GitHub Repos tamamlandı: %d repo", len(pages))
@@ -356,28 +352,21 @@ def collect_huggingface_datasets() -> tuple[str, dict]:
         tags = info.get("tags", [])
         downloads = info.get("downloads", 0)
 
-        rows_r = _safe_get(
-            f"https://datasets-server.huggingface.co/first-rows"
-            f"?dataset={dataset_id}&config=default&split=train"
-        )
+        rows_r = _safe_get(f"https://datasets-server.huggingface.co/first-rows?dataset={dataset_id}&config=default&split=train")
         sample_text = ""
         if rows_r:
             for row in (rows_r.json().get("rows", []))[:5]:
                 sample_text += json.dumps(row.get("row", {}), ensure_ascii=False) + "\n"
 
-        content = (
-            f"Dataset: {dataset_id}\n"
-            f"Description: {description}\n"
-            f"Tags: {', '.join(tags)}\n"
-            f"Downloads: {downloads}\n"
-            f"\nSample rows:\n{sample_text}"
-        )
+        content = f"Dataset: {dataset_id}\nDescription: {description}\nTags: {', '.join(tags)}\nDownloads: {downloads}\n\nSample rows:\n{sample_text}"
 
-        pages.append(_make_page(
-            url=source_url,
-            content=content,
-            title=f"HuggingFace Dataset: {dataset_id}",
-        ))
+        pages.append(
+            _make_page(
+                url=source_url,
+                content=content,
+                title=f"HuggingFace Dataset: {dataset_id}",
+            )
+        )
         logger.info("  ✅ %s alındı", dataset_id)
 
     logger.info("✅ HuggingFace Datasets tamamlandı: %d dataset", len(pages))
@@ -425,11 +414,7 @@ def run() -> None:
         json.dump(all_results, f, indent=2, ensure_ascii=False)
 
     total_pages = sum(v["total_pages"] for v in all_results.values())
-    total_chars = sum(
-        len(p.get("main_content", "") or "")
-        for v in all_results.values()
-        for p in v.get("pages", [])
-    )
+    total_chars = sum(len(p.get("main_content", "") or "") for v in all_results.values() for p in v.get("pages", []))
 
     logger.info("=" * 60)
     logger.info("📊 ÖZET")
@@ -442,6 +427,7 @@ def run() -> None:
     logger.info("\nRAG indeksi guncelleniyor...")
     try:
         from agenticcybersense.web_crawler.rag_ingest import ingest_crawler_json  # noqa: PLC0415
+
         rag_stats = ingest_crawler_json(str(OUTPUT_FILE))
         logger.info("RAG indeksi guncellendi: %s", rag_stats)
     except Exception:
