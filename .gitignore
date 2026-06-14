@@ -24,3 +24,13 @@ venv
 
 # ignore data folders
 data/
+
+# Mac metadata
+.DS_Store
+
+# Local scripts (not part of the project)
+telegram_auth.py
+websites_info.py
+
+# Crawler output files (generated, not tracked)
+src/agenticcybersense/web_crawler/output/
