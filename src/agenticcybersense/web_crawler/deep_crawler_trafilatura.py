@@ -64,8 +64,7 @@ class DeepCrawler:
         if history_manager and main_content:
             should_crawl, _reason = history_manager.should_deep_crawl(start_url, main_content)
             if not should_crawl:
-                logger.info("  ℹ️  Main page unchanged — subpages will still be checked individually")
-                
+                logger.info("Main page unchanged — subpages will still be checked individually")
 
         logger.info("  🚀 Starting deep crawl...")
 
