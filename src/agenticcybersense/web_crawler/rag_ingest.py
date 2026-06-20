@@ -100,7 +100,8 @@ def upsert_site(url: str, page_idx: int, title: str, content: str, metadata: dic
         }
         for i in range(len(chunks))
     ]
-    ids = [f"{url}::{page_idx}::{i}" for i in range(len(chunks))]
+    prefix = "api::" if metadata.get("crawl_mode") == "api" else ""
+    ids = [f"{prefix}{url}::{page_idx}::{i}" for i in range(len(chunks))]
     collection.upsert(documents=chunks, metadatas=doc_metadatas, ids=ids, embeddings=embeddings)
     return len(chunks)
 
@@ -178,6 +179,7 @@ def query_webcrawler_rag(query: str, n_results: int = 5) -> list[dict[str, Any]]
                 "title": meta.get("title", ""),
                 "site_url": meta.get("site_url", ""),
                 "last_updated": meta.get("last_updated", ""),
+                "crawl_mode": meta.get("crawl_mode", "crawler"),
                 "score": round(1 - dist, 3),
             },
         )
