@@ -130,9 +130,13 @@ class WebAgent(BaseAgent):
             content = str(item.get("content", ""))[:300].replace("\n", " ")
             last_updated = str(item.get("last_updated", ""))[:10] or "unknown"
 
+            crawl_mode = str(item.get("crawl_mode", "crawler"))
+            source_label = "API" if crawl_mode == "api" else "Crawler"
+
             lines += [
                 f"\n**[{i}] {title}**\n",
                 f"- URL: {url}\n",
+                f"- Source: {source_label}\n",
                 f"- Relevance: {score:.0%}\n",
                 f"- Last crawled: {last_updated}\n",
                 f"- Preview: {content}...\n",

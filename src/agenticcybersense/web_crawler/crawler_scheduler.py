@@ -34,13 +34,28 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 
-async def run_crawler_and_ingest() -> None:
-    """Run the full crawl cycle.
+async def run_api_collector() -> None:
+    """Run the API collector and ingest results into ChromaDB."""
+    logger.info("=" * 60)
+    logger.info("Scheduled API collector starting...")
+    logger.info("=" * 60)
 
-    Calls main() from main_trafilatura.py which:
+    try:
+        from agenticcybersense.web_crawler.api_collector import run  # noqa: PLC0415
+
+        await asyncio.to_thread(run)
+        logger.info("Scheduled API collector completed successfully")
+    except Exception as exc:
+        logger.exception("Scheduled API collector failed: %s", exc)
+
+
+async def run_crawler_and_ingest() -> None:
+    """Run the full crawl cycle, then the API collector.
+
     1. Crawls all configured sites (hash-based incremental by default)
     2. Saves results to output/latest_results.json
     3. Ingests the JSON into ChromaDB via rag_ingest.py
+    4. Runs API collector immediately after crawler finishes
     """
     logger.info("=" * 60)
     logger.info("Scheduled crawler starting...")
@@ -53,6 +68,9 @@ async def run_crawler_and_ingest() -> None:
         logger.info("Scheduled crawl completed successfully")
     except Exception as exc:
         logger.exception("Scheduled crawl failed: %s", exc)
+        return
+
+    await run_api_collector()
 
 
 async def start_scheduler(hour: int = 2, minute: int = 0) -> None:
