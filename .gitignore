@@ -34,3 +34,5 @@ websites_info.py
 
 # Crawler output files (generated, not tracked)
 src/agenticcybersense/web_crawler/output/
+# Telegram channels
+src/agenticcybersense/agents/telegram/telegram_channels.py
