@@ -10,10 +10,15 @@ from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
 from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
-from agenticcybersense.agents.telegram.telegram_channels import TELEGRAM_CHANNELS
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
+
+try:
+    from agenticcybersense.agents.telegram.telegram_channels import TELEGRAM_CHANNELS
+except ModuleNotFoundError:
+    # Local channel config is intentionally gitignored; CI should still import cleanly.
+    TELEGRAM_CHANNELS: list[dict[str, str]] = []
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
