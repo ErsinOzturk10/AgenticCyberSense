@@ -24,3 +24,6 @@ venv
 
 # ignore data folders
 data/
+
+# Telegram channels
+src/agenticcybersense/agents/telegram/telegram_channels.py
