@@ -10,10 +10,15 @@ from agenticcybersense.agents.base import BaseAgent
 from agenticcybersense.agents.registry import register_agent
 from agenticcybersense.agents.telegram.client import TelegramClientWrapper
 from agenticcybersense.agents.telegram.parser import CVE_RE, normalize_message
-from agenticcybersense.agents.telegram.telegram_channels import TELEGRAM_CHANNELS
 from agenticcybersense.schemas.findings import Finding, Severity, SourceRef, SourceType
 from agenticcybersense.schemas.messages import AgentRequest, AgentResponse
 from agenticcybersense.settings import settings
+
+try:
+    from agenticcybersense.agents.telegram.telegram_channels import TELEGRAM_CHANNELS
+except ModuleNotFoundError:
+    # Local channel config is intentionally gitignored; CI should still import cleanly.
+    TELEGRAM_CHANNELS: list[dict[str, str]] = []
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -27,6 +32,7 @@ class TelegramAgent(BaseAgent):
     description: str = "Monitors Telegram groups and channels for leaked data and threat actor activity"
     MIN_QUERY_TERM_LENGTH: ClassVar[int] = 3
     MAX_EMAIL_LOCAL_VISIBLE_CHARS: ClassVar[int] = 2
+    MAX_EVIDENCE_MESSAGES: ClassVar[int] = 10
 
     def __init__(self, llm: BaseChatModel | None = None) -> None:
         """Initialize the Telegram agent."""
@@ -78,7 +84,7 @@ class TelegramAgent(BaseAgent):
         """Detect questions asking whether usernames, passwords, or credentials were leaked."""
         q = (query or "").lower()
 
-        credential_terms = [
+        explicit_credential_terms = [
             "credential",
             "credentials",
             "username",
@@ -100,14 +106,28 @@ class TelegramAgent(BaseAgent):
             "combo list",
             "stealer log",
             "stealer logs",
-            "leaked",
-            "leak",
-            "compromised",
+        ]
+
+        leak_phrases = [
+            "credential leak",
+            "credential leaks",
+            "leaked credentials",
+            "compromised credentials",
+            "password leak",
+            "password leaks",
+            "username leak",
+            "username leaks",
+            "stealer leak",
+            "stealer leaks",
+            "combo leak",
+            "combo leaks",
+            "combolist leak",
+            "combolist leaks",
         ]
 
         telegram_terms = ["telegram", "channel", "channels"]
 
-        has_credential_intent = any(term in q for term in credential_terms)
+        has_credential_intent = any(term in q for term in explicit_credential_terms) or any(phrase in q for phrase in leak_phrases)
         has_telegram_context = any(term in q for term in telegram_terms) or self._extract_requested_channel_id(query) is not None
 
         return has_credential_intent and has_telegram_context
@@ -784,6 +804,7 @@ class TelegramAgent(BaseAgent):
         elif is_credential_investigation:
             target = requested_channel_id or "configured Telegram channels"
             indicator_counts = self._credential_indicator_counts(matched_messages)
+            display_messages = matched_messages[: self.MAX_EVIDENCE_MESSAGES]
 
             response_parts.append(
                 f"**Credential Leak Investigation Result:** Yes. Username/password-like credential content was detected for **{target}**.\n\n",
@@ -800,7 +821,12 @@ class TelegramAgent(BaseAgent):
                 "Credential values are partially masked or redacted in the UI.\n\n",
             )
 
-            for idx, msg in enumerate(matched_messages, start=1):
+            if len(matched_messages) > len(display_messages):
+                response_parts.append(
+                    f"Showing the first {len(display_messages)} of {len(matched_messages)} matching messages to keep the report concise.\n\n",
+                )
+
+            for idx, msg in enumerate(display_messages, start=1):
                 raw_text = msg.get("text", "") or ""
                 indicators = self._credential_indicators(raw_text)
                 summary_lines = self._credential_summary_lines(raw_text)

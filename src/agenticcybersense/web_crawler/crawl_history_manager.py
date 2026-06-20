@@ -19,7 +19,9 @@ class CrawlHistoryManager:
     """Manage crawl history records and content hashes."""
 
     def __init__(self, db_file: str = "crawl_history.db"):
-        self.db_file = db_file
+        db_path = Path(db_file)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.db_file = str(db_path)
         self._init_db()
         self._migrate_json_if_exists()
 
